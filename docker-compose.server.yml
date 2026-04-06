@@ -1,0 +1,50 @@
+services:
+  cd-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cd-backend
+    ports:
+      - "8100:8100"
+      - "11113:11113"
+    volumes:
+      - ./backend/dicom_nodes.json:/app/dicom_nodes.json
+      - ./cd_template:/app/cd_template
+      - ./launcher/build:/app/launcher_build
+      - cd_temp:/tmp/bluepacs_cd
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8100"
+      DEBUG: "false"
+      TEMP_DIR: /tmp/bluepacs_cd
+      OHIF_VIEWER_PATH: /app/cd_template/viewer
+      LAUNCHER_PATH: /app/launcher_build
+    networks:
+      - cd-network
+      - pacs-network
+    restart: unless-stopped
+
+  cd-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BACKEND_INTERNAL_URL: http://cd-backend:8100
+    container_name: cd-frontend
+    ports:
+      - "3100:3100"
+    depends_on:
+      - cd-backend
+    networks:
+      - cd-network
+    restart: unless-stopped
+
+volumes:
+  cd_temp:
+
+networks:
+  cd-network:
+    driver: bridge
+  pacs-network:
+    external: true
+    name: ${PACS_NETWORK_NAME:-bluepacs_cd_creation_static-network}

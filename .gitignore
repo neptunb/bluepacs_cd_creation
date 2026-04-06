@@ -1,0 +1,42 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+*.egg-info/
+dist/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Go
+launcher/build/
+
+# CD Builder temp
+/tmp/bluepacs_cd/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OHIF build (generated)
+cd_template/viewer/*
+!cd_template/viewer/.gitkeep
+

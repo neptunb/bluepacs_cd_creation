@@ -1,0 +1,10 @@
+[AutoRun]
+open=windows_view.exe
+label=DICOM Images Viewer
+icon=windows_view.exe,0
+action=Open DICOM Viewer
+
+[Content]
+MusicFiles=false
+PictureFiles=false
+VideoFiles=false
