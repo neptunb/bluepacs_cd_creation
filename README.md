@@ -122,7 +122,7 @@ ifconfig | grep "inet " | grep -v 127.0.0.1
 Horos row to create at Locations
 ```
 Field	         Value
-AE Title	         BLUEPACS_CD
+AE Title	      BLUEPACS_CD
 Host	         127.0.0.1 or your Mac LAN IP
 Port	         11113
 ```
