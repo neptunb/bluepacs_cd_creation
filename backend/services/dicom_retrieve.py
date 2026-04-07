@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import aiohttp
-from pynetdicom import AE, evt, StoragePresentationContexts
+from pynetdicom import AE, evt, StoragePresentationContexts, build_role
 from pynetdicom.sop_class import (
     PatientRootQueryRetrieveInformationModelGet,
     PatientRootQueryRetrieveInformationModelMove,
@@ -15,6 +15,13 @@ from pynetdicom.sop_class import (
     StudyRootQueryRetrieveInformationModelMove,
 )
 from pydicom.dataset import Dataset
+from pydicom.uid import (
+    UID,
+    ExplicitVRLittleEndian,
+    ImplicitVRLittleEndian,
+    DeflatedExplicitVRLittleEndian,
+    ExplicitVRBigEndian,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +110,48 @@ class DicomRetrieveService:
             # so storage SOP classes must be *requested* (not just supported).
             # DICOM allows max 128 presentation contexts per association.
             max_storage = 128 - len(qr_contexts)
-            for cx in StoragePresentationContexts[:max_storage]:
+            requested_storage_uids: set[str] = set()
+
+            # Prioritize SOP classes seen failing in remote PACS logs so they
+            # are always included even if StoragePresentationContexts is truncated.
+            prioritized_storage_uids = [
+                UID("1.2.840.10008.5.1.4.1.1.2"),   # CT Image Storage
+                UID("1.2.840.10008.5.1.4.1.1.7"),   # Secondary Capture Image Storage
+                UID("1.2.840.10008.5.1.4.1.1.11.1"),  # Grayscale Softcopy Presentation State
+                UID("1.2.840.10008.5.1.4.1.1.20"),  # Nuclear Medicine Image Storage
+                UID("1.2.840.10008.5.1.4.1.1.88.67"),  # X-Ray Radiation Dose SR Storage
+            ]
+            preferred_transfer_syntaxes = [
+                ExplicitVRLittleEndian,
+                ImplicitVRLittleEndian,
+                DeflatedExplicitVRLittleEndian,
+                ExplicitVRBigEndian,
+            ]
+
+            for sop_uid in prioritized_storage_uids:
+                if len(requested_storage_uids) >= max_storage:
+                    break
+                ae.add_requested_context(
+                    sop_uid,
+                    preferred_transfer_syntaxes,
+                )
+                requested_storage_uids.add(str(sop_uid))
+
+            for cx in StoragePresentationContexts:
+                sop_uid = str(cx.abstract_syntax)
+                if sop_uid in requested_storage_uids:
+                    continue
+                if len(requested_storage_uids) >= max_storage:
+                    break
                 ae.add_requested_context(cx.abstract_syntax)
+                requested_storage_uids.add(sop_uid)
+
+            # For C-GET, peer sends C-STORE over the same association.
+            # Negotiate SCP role for storage SOP classes we requested.
+            storage_role_ext_neg = [
+                build_role(UID(sop_uid), scu_role=True, scp_role=True)
+                for sop_uid in requested_storage_uids
+            ]
 
             # Also register as supported for C-MOVE SCP fallback later.
             for cx in StoragePresentationContexts:
@@ -119,6 +166,7 @@ class DicomRetrieveService:
                 self.remote_port,
                 ae_title=self.remote_ae,
                 evt_handlers=handlers,
+                ext_neg=storage_role_ext_neg,
             )
             if assoc.is_established:
                 if assoc.accepted_contexts:

@@ -3,6 +3,7 @@ import shutil
 import logging
 import uuid
 import hashlib
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 def _iso_component(name: str, max_len: int = 30) -> str:
     """Return a deterministic ISO9660-safe path component."""
-    cleaned = "".join(ch for ch in name.upper() if ch.isalnum() or ch in ("_", "-"))
+    ascii_name = _ascii_safe_text(name).upper()
+    cleaned = "".join(ch for ch in ascii_name if ch.isalnum() or ch in ("_", "-"))
     if not cleaned:
         cleaned = "X"
     if len(cleaned) <= max_len:
@@ -31,6 +33,12 @@ def _iso_path_from_rel(rel_path: str) -> str:
     if not safe:
         return "/"
     return "/" + "/".join(safe)
+
+
+def _ascii_safe_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return ascii_text.strip() or "UNKNOWN"
 
 
 class CdBuilderService:
@@ -116,13 +124,14 @@ class CdBuilderService:
                         shutil.copy2(src, dest)
 
             autorun = os.path.join(work_dir, "autorun.inf")
-            with open(autorun, "w") as f:
+            patient_name_ascii = _ascii_safe_text(patient_name)
+            with open(autorun, "w", encoding="utf-8") as f:
                 f.write("[AutoRun]\n")
                 f.write("open=windows_view.exe\n")
-                f.write(f"label=DICOM Images - {patient_name}\n")
+                f.write(f"label=DICOM Images - {patient_name_ascii}\n")
 
             readme = os.path.join(work_dir, "README.txt")
-            with open(readme, "w") as f:
+            with open(readme, "w", encoding="utf-8") as f:
                 f.write(f"DICOM Images CD - {patient_name} ({patient_id})\n")
                 f.write("=" * 50 + "\n\n")
                 f.write("To view your medical images:\n\n")
@@ -132,8 +141,13 @@ class CdBuilderService:
                 f.write("A browser window will open with the image viewer.\n")
                 f.write("Close the browser and terminal when finished.\n")
 
-        safe_name = "".join(c for c in patient_name if c.isalnum() or c in " _-")[:32]
-        iso_filename = f"DICOM_{safe_name}_{patient_id}.iso"
+        safe_name = "".join(
+            c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
+        )[:32]
+        safe_patient_id = "".join(
+            c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
+        )[:32] or "UNKNOWNID"
+        iso_filename = f"DICOM_{safe_name}_{safe_patient_id}.iso"
         iso_path = os.path.join(self.temp_dir, iso_filename)
 
         _create_iso(work_dir, iso_path, patient_name)
@@ -155,8 +169,8 @@ def _create_iso(source_dir: str, iso_path: str, volume_label: str):
 
         if rel_root != ".":
             iso_dir = _iso_path_from_rel(rel_root)
-            joliet_dir = "/" + rel_root.replace(os.sep, "/")
-            rr_name = os.path.basename(rel_root)[:128]
+            joliet_dir = _iso_path_from_rel(rel_root)
+            rr_name = _ascii_safe_text(os.path.basename(rel_root))[:128]
             try:
                 iso.add_directory(
                     iso_path=iso_dir,
@@ -172,8 +186,8 @@ def _create_iso(source_dir: str, iso_path: str, volume_label: str):
             rel_path = os.path.relpath(filepath, source_dir)
 
             iso_name = _iso_path_from_rel(rel_path)
-            joliet_name = "/" + rel_path.replace(os.sep, "/")
-            rr_name = filename[:128]
+            joliet_name = _iso_path_from_rel(rel_path)
+            rr_name = _ascii_safe_text(filename)[:128]
 
             try:
                 iso.add_file(

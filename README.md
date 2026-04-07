@@ -114,9 +114,9 @@ See [LICENSE](./LICENSE) file.
 ------------
 How to find the LAN IP on macOS (Use one of them)
 ```
+ifconfig | grep "inet " | grep -v 127.0.0.1   <-- First try this
 ipconfig getifaddr en0
 route get default | grep interface
-ifconfig | grep "inet " | grep -v 127.0.0.1
 ```
 
 Horos row to create at Locations
@@ -125,4 +125,18 @@ Field	         Value
 AE Title	      BLUEPACS_CD
 Host	         127.0.0.1 or your Mac LAN IP
 Port	         11113
+```
+-----------
+1. Define Remote DicomModality with the following definition for BLUEPACS_CD. Get BLUEPACS_CD PC's IP by using one of the above cli commands.
+````
+   "BLUEPACS_CD": ["BLUEPACS_CD", "192.168.65.1, 11113]
+````
+2. Add the following json data in dicom_nodes.json
+```
+   {
+      "ae_title": "ORTHANC",
+      "host": "192.168.1.32",
+      "port": 11112,
+      "name": "PACS (Neptun @i13)"
+   }
 ```
