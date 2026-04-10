@@ -54,6 +54,7 @@ class BurnRequest(BaseModel):
     patient_name: str
     studies: list[str]  # list of StudyInstanceUIDs
     series: Optional[list[str]] = None  # optional subset of SeriesInstanceUIDs
+    expected_instances: Optional[int] = None
     include_viewer: bool = True
 
 
@@ -64,3 +65,5 @@ class BuildProgress(BaseModel):
     message: str
     filename: Optional[str] = None
     download_ready: bool = False
+    retrieved_instances: int = 0
+    expected_instances: Optional[int] = None

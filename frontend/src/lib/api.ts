@@ -64,6 +64,7 @@ export const createCd = async (params: {
   patient_name: string;
   studies: string[];
   series?: string[];
+  expected_instances?: number;
   include_viewer?: boolean;
 }): Promise<{ job_id: string }> => {
   const response = await api.post("/burn/create", params);

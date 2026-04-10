@@ -4,7 +4,7 @@ import logging
 import io
 import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import aiohttp
 from pynetdicom import AE, evt, StoragePresentationContexts, build_role
@@ -57,12 +57,14 @@ class DicomRetrieveService:
         study_instance_uid: str,
         output_dir: str,
         series_filter: Optional[list[str]] = None,
+        on_instance_retrieved: Optional[Callable[[int], None]] = None,
     ) -> int:
         if self.orthanc_url:
             return await self._retrieve_study_via_orthanc(
                 study_instance_uid=study_instance_uid,
                 output_dir=output_dir,
                 series_filter=series_filter,
+                on_instance_retrieved=on_instance_retrieved,
             )
 
         def _retrieve():
@@ -86,6 +88,8 @@ class DicomRetrieveService:
                 filepath = os.path.join(series_dir, f"{sop_uid}.dcm")
                 ds.save_as(filepath, write_like_original=False)
                 file_count += 1
+                if on_instance_retrieved:
+                    on_instance_retrieved(file_count)
                 return 0x0000
 
             handlers = [(evt.EVT_C_STORE, handle_store)]
@@ -256,6 +260,7 @@ class DicomRetrieveService:
         study_instance_uid: str,
         output_dir: str,
         series_filter: Optional[list[str]] = None,
+        on_instance_retrieved: Optional[Callable[[int], None]] = None,
     ) -> int:
         os.makedirs(output_dir, exist_ok=True)
         timeout = aiohttp.ClientTimeout(total=120)
@@ -390,6 +395,8 @@ class DicomRetrieveService:
                         f.write(data)
                     file_count += 1
                     diagnostics["instances_downloaded"] += 1
+                    if on_instance_retrieved:
+                        on_instance_retrieved(file_count)
 
             if file_count == 0:
                 # Final fallback: download whole study archive from Orthanc and extract.

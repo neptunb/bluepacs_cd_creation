@@ -41,4 +41,6 @@ export interface BuildJob {
   message: string;
   filename: string | null;
   download_ready: boolean;
+  retrieved_instances: number;
+  expected_instances: number | null;
 }

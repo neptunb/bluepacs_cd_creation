@@ -1,11 +1,12 @@
 import os
+import stat
 import shutil
 import logging
 import uuid
 import hashlib
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import pycdlib
 
@@ -39,6 +40,17 @@ def _ascii_safe_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value or "")
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     return ascii_text.strip() or "UNKNOWN"
+
+
+def _rock_ridge_file_mode(filepath: str) -> int:
+    """POSIX mode for Rock Ridge entries; Unix launchers must be 755 or Finder opens them as documents."""
+    base = os.path.basename(filepath)
+    if base in ("macos_view", "linux_view"):
+        return 0o755
+    try:
+        return stat.S_IMODE(os.stat(filepath).st_mode)
+    except OSError:
+        return 0o644
 
 
 class CdBuilderService:
@@ -76,6 +88,7 @@ class CdBuilderService:
         self,
         study_uids: list[str],
         series_filter: Optional[list[str]] = None,
+        on_instance_retrieved: Optional[Callable[[int], None]] = None,
     ) -> str:
         work_dir = os.path.join(self.temp_dir, str(uuid.uuid4()))
         study_dir = os.path.join(work_dir, "STUDY")
@@ -85,10 +98,20 @@ class CdBuilderService:
 
         for study_uid in study_uids:
             output = os.path.join(study_dir, study_uid)
+            prior_total = total_files
             count = await self.retriever.retrieve_study(
                 study_instance_uid=study_uid,
                 output_dir=output,
                 series_filter=series_filter,
+                on_instance_retrieved=(
+                    (
+                        lambda study_count, base=prior_total: on_instance_retrieved(
+                            base + study_count
+                        )
+                    )
+                    if on_instance_retrieved
+                    else None
+                ),
             )
             total_files += count
             per_study_counts[study_uid] = count
@@ -122,6 +145,11 @@ class CdBuilderService:
                     if os.path.exists(src):
                         dest = os.path.join(work_dir, launcher)
                         shutil.copy2(src, dest)
+                        if launcher in ("macos_view", "linux_view"):
+                            try:
+                                os.chmod(dest, 0o755)
+                            except OSError as e:
+                                logger.warning("chmod launcher %s: %s", dest, e)
 
             autorun = os.path.join(work_dir, "autorun.inf")
             patient_name_ascii = _ascii_safe_text(patient_name)
@@ -136,8 +164,22 @@ class CdBuilderService:
                 f.write("=" * 50 + "\n\n")
                 f.write("To view your medical images:\n\n")
                 f.write("  Windows: Double-click windows_view.exe\n")
-                f.write("  macOS:   Double-click macos_view\n")
+                f.write("  macOS:   First open macos_view (see macOS note below)\n")
                 f.write("  Linux:   Run ./linux_view in terminal\n\n")
+                f.write(
+                    "macOS security (Gatekeeper): If macOS says the app cannot be "
+                    "verified or was not opened, that is normal for unsigned viewer "
+                    "launchers. Try in order:\n"
+                    "  1) Right-click macos_view, choose Open, then click Open again.\n"
+                    "  2) System Settings -> Privacy & Security -> scroll down -> "
+                    "Open Anyway (for macos_view).\n"
+                    "  3) Terminal: xattr -cr '/path/to/macos_view' then open again "
+                    "(removes quarantine if present).\n"
+                    "If TextEdit (or another editor) opens and shows random characters, "
+                    "the file was not treated as a program. Open Terminal, cd to the "
+                    "folder that contains macos_view, then run:\n"
+                    "  chmod +x macos_view && ./macos_view\n\n"
+                )
                 f.write("A browser window will open with the image viewer.\n")
                 f.write("Close the browser and terminal when finished.\n")
 
@@ -176,6 +218,7 @@ def _create_iso(source_dir: str, iso_path: str, volume_label: str):
                     iso_path=iso_dir,
                     joliet_path=joliet_dir,
                     rr_name=rr_name,
+                    file_mode=0o755,
                 )
             except Exception as e:
                 logger.warning("Could not add directory %s to ISO: %s", rel_root, e)
@@ -195,6 +238,7 @@ def _create_iso(source_dir: str, iso_path: str, volume_label: str):
                     iso_path=f"{iso_name};1",
                     joliet_path=joliet_name,
                     rr_name=rr_name,
+                    file_mode=_rock_ridge_file_mode(filepath),
                 )
             except Exception as e:
                 logger.warning("Could not add file %s to ISO: %s", filepath, e)

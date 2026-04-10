@@ -45,6 +45,10 @@ const BurnPanel = () => {
     selectedPatient?.patient_id ?? firstSelectedStudy?.patient_id ?? "";
   const burnPatientName =
     selectedPatient?.patient_name ?? firstSelectedStudy?.patient_name ?? "";
+  const expectedInstances = selectedStudies.reduce((sum, studyUid) => {
+    const study = studies.find((s) => s.study_instance_uid === studyUid);
+    return sum + (study?.number_of_instances ?? 0);
+  }, 0);
 
   const canBuild =
     Boolean(selectedNode) &&
@@ -64,6 +68,7 @@ const BurnPanel = () => {
         patient_name: burnPatientName || "Patient",
         studies: selectedStudies,
         series: selectedSeries.length > 0 ? selectedSeries : undefined,
+        expected_instances: expectedInstances > 0 ? expectedInstances : undefined,
         include_viewer: true,
       });
 
@@ -74,6 +79,8 @@ const BurnPanel = () => {
         message: "Job queued...",
         filename: null,
         download_ready: false,
+        retrieved_instances: 0,
+        expected_instances: expectedInstances > 0 ? expectedInstances : null,
       });
 
       pollRef.current = setInterval(async () => {
@@ -95,6 +102,7 @@ const BurnPanel = () => {
     selectedNode,
     burnPatientId,
     burnPatientName,
+    expectedInstances,
     selectedStudies,
     selectedSeries,
     setBuildJob,
@@ -131,6 +139,11 @@ const BurnPanel = () => {
       case "building": return "warning" as const;
       default: return "default" as const;
     }
+  };
+  const getStatusIcon = (status?: string) => {
+    if (status === "complete") return <CheckCircleIcon />;
+    if (status === "error") return <ErrorIcon />;
+    return undefined;
   };
 
   return (
@@ -180,9 +193,7 @@ const BurnPanel = () => {
         fullWidth
         aria-labelledby="build-dialog-title"
       >
-        <DialogTitle id="build-dialog-title">
-          CD Image Builder
-        </DialogTitle>
+        <DialogTitle id="build-dialog-title">CD Image Builder</DialogTitle>
         <DialogContent>
           {buildJob && (
             <Box className="space-y-4 py-2">
@@ -192,13 +203,7 @@ const BurnPanel = () => {
                   label={buildJob.status}
                   color={statusColor(buildJob.status)}
                   size="small"
-                  icon={
-                    buildJob.status === "complete" ? (
-                      <CheckCircleIcon />
-                    ) : buildJob.status === "error" ? (
-                      <ErrorIcon />
-                    ) : undefined
-                  }
+                  icon={getStatusIcon(buildJob.status)}
                 />
               </Box>
 
@@ -214,6 +219,9 @@ const BurnPanel = () => {
 
               <Typography variant="body2" className="text-gray-600">
                 {buildJob.message}
+              </Typography>
+              <Typography variant="body2" className="text-gray-700 font-medium">
+                Retrieved instances: {buildJob.retrieved_instances}
               </Typography>
 
               {buildJob.download_ready && (
@@ -237,7 +245,10 @@ const BurnPanel = () => {
                   >
                     Download ISO to My PC
                   </Button>
-                  <Typography variant="caption" className="text-gray-400 block text-center">
+                  <Typography
+                    variant="body2"
+                    className="mt-3 block text-center text-gray-700 font-medium"
+                  >
                     After downloading, right-click the .iso file and select
                     &quot;Burn disc image&quot; (Windows) or use Disk Utility (macOS)
                   </Typography>

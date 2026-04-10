@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+from threading import Lock
 
 from sanic import Blueprint, json as json_response
 from sanic.request import Request
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 burn_bp = Blueprint("burn")
 
 active_jobs: dict[str, dict] = {}
+job_locks: dict[str, Lock] = {}
 
 
 @burn_bp.route("/create", methods=["POST"])
@@ -37,7 +39,10 @@ async def create_cd(request: Request):
         "message": "Job queued",
         "output_path": None,
         "filename": None,
+        "retrieved_instances": 0,
+        "expected_instances": burn_req.expected_instances,
     }
+    job_locks[job_id] = Lock()
 
     app = request.app
     app.add_task(
@@ -61,6 +66,8 @@ async def get_status(request: Request, job_id: str):
         "message": job["message"],
         "filename": job["filename"],
         "download_ready": job["status"] == "complete" and job["output_path"] is not None,
+        "retrieved_instances": job.get("retrieved_instances", 0),
+        "expected_instances": job.get("expected_instances"),
     })
 
 
@@ -102,15 +109,17 @@ async def cleanup_job(request: Request, job_id: str):
             logger.warning("Failed to clean up ISO: %s", e)
 
     del active_jobs[job_id]
+    job_locks.pop(job_id, None)
     return json_response({"status": "cleaned"})
 
 
 async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
     job = active_jobs[job_id]
+    job_lock = job_locks[job_id]
     try:
         job["status"] = "retrieving"
-        job["message"] = "Retrieving DICOM files from PACS..."
-        job["progress"] = 0.1
+        job["message"] = "Retrieving DICOM files from PACS... (0)"
+        job["progress"] = 0.05
 
         orthanc_user, orthanc_password = config.orthanc_http_credentials(node)
         builder = CdBuilderService(
@@ -127,14 +136,36 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             orthanc_password=orthanc_password,
         )
 
+        expected_instances = burn_req.expected_instances or 0
+
+        def on_instance_retrieved(total_retrieved: int) -> None:
+            with job_lock:
+                job["retrieved_instances"] = total_retrieved
+                if expected_instances > 0:
+                    ratio = min(total_retrieved / expected_instances, 1.0)
+                    retrieval_progress = 0.05 + (0.75 * ratio)
+                    job["message"] = (
+                        f"Retrieving DICOM files from PACS... "
+                        f"({total_retrieved}/{expected_instances})"
+                    )
+                else:
+                    # Unknown total: keep moving slowly so users see activity.
+                    retrieval_progress = min(0.8, 0.05 + (total_retrieved * 0.001))
+                    job["message"] = (
+                        f"Retrieving DICOM files from PACS... "
+                        f"({total_retrieved} retrieved)"
+                    )
+                job["progress"] = retrieval_progress
+
         work_dir = await builder.retrieve_studies(
             burn_req.studies,
             series_filter=burn_req.series,
+            on_instance_retrieved=on_instance_retrieved,
         )
 
         job["status"] = "building"
         job["message"] = "Building ISO image with viewer and launchers..."
-        job["progress"] = 0.6
+        job["progress"] = 0.9
 
         output_path = await builder.build_iso(
             work_dir=work_dir,
