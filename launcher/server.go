@@ -11,16 +11,14 @@ import (
 type Server struct {
 	addr      string
 	viewerDir string
-	studyDir  string
 	dicomWeb  *DicomWebHandler
 }
 
-func NewServer(addr, viewerDir, studyDir string) *Server {
+func NewServer(addr, viewerDir, dicomDir string) *Server {
 	return &Server{
 		addr:      addr,
 		viewerDir: viewerDir,
-		studyDir:  studyDir,
-		dicomWeb:  NewDicomWebHandler(studyDir),
+		dicomWeb:  NewDicomWebHandler(dicomDir),
 	}
 }
 

@@ -27,6 +27,8 @@ class Config:
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/bluepacs_cd")
     OHIF_VIEWER_PATH: str = os.getenv("OHIF_VIEWER_PATH", "../cd_template/viewer")
     LAUNCHER_PATH: str = os.getenv("LAUNCHER_PATH", "../launcher/build")
+    # K-PACS Lite viewer binaries and config (no DICOM/DICOMDIR — those are generated per job).
+    KPACS_TEMPLATE_PATH: str = os.getenv("KPACS_TEMPLATE_PATH", "../cd_template/kpacs")
 
     # When Orthanc /tools/find returns 0 (e.g. MySQL index), "recent studies" uses GET /studies + metadata.
     ORTHANC_RECENT_STUDIES_MAX_SCAN: int = int(

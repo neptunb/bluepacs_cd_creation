@@ -18,6 +18,7 @@ services:
       DEBUG: "false"
       TEMP_DIR: /tmp/bluepacs_cd
       OHIF_VIEWER_PATH: /app/cd_template/viewer
+      KPACS_TEMPLATE_PATH: /app/cd_template/kpacs
       LAUNCHER_PATH: /app/launcher_build
     networks:
       - cd-network

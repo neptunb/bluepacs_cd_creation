@@ -66,6 +66,7 @@ export const createCd = async (params: {
   series?: string[];
   expected_instances?: number;
   include_viewer?: boolean;
+  include_kpacs?: boolean;
 }): Promise<{ job_id: string }> => {
   const response = await api.post("/burn/create", params);
   return response.data;
@@ -78,6 +79,10 @@ export const getBuildStatus = async (job_id: string): Promise<BuildJob> => {
 
 export const getDownloadUrl = (job_id: string): string => {
   return `/api/burn/download/${job_id}`;
+};
+
+export const getKpacsDownloadUrl = (job_id: string): string => {
+  return `/api/burn/download-kpacs/${job_id}`;
 };
 
 export const cleanupJob = async (job_id: string): Promise<void> => {

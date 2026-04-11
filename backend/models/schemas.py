@@ -56,6 +56,7 @@ class BurnRequest(BaseModel):
     series: Optional[list[str]] = None  # optional subset of SeriesInstanceUIDs
     expected_instances: Optional[int] = None
     include_viewer: bool = True
+    include_kpacs: bool = True
 
 
 class BuildProgress(BaseModel):
@@ -65,5 +66,8 @@ class BuildProgress(BaseModel):
     message: str
     filename: Optional[str] = None
     download_ready: bool = False
+    kpacs_filename: Optional[str] = None
+    kpacs_download_ready: bool = False
+    kpacs_error: Optional[str] = None
     retrieved_instances: int = 0
     expected_instances: Optional[int] = None

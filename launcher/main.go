@@ -17,11 +17,11 @@ func main() {
 	}
 	baseDir := filepath.Dir(execPath)
 
-	studyDir := filepath.Join(baseDir, "STUDY")
+	dicomDir := filepath.Join(baseDir, "DICOM")
 	viewerDir := filepath.Join(baseDir, "viewer")
 
-	if _, err := os.Stat(studyDir); os.IsNotExist(err) {
-		log.Fatal("STUDY directory not found at:", studyDir)
+	if _, err := os.Stat(dicomDir); os.IsNotExist(err) {
+		log.Fatal("DICOM directory not found at:", dicomDir)
 	}
 	if _, err := os.Stat(viewerDir); os.IsNotExist(err) {
 		log.Fatal("viewer directory not found at:", viewerDir)
@@ -42,7 +42,7 @@ func main() {
 	fmt.Println("  Press Ctrl+C to stop")
 	fmt.Println("==============================================")
 
-	server := NewServer(addr, viewerDir, studyDir)
+	server := NewServer(addr, viewerDir, dicomDir)
 
 	go func() {
 		if err := openBrowser(url); err != nil {

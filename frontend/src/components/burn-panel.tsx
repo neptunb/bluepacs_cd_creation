@@ -21,7 +21,13 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
 import { useCdStore } from "@/store/use-cd-store";
-import { createCd, getBuildStatus, getDownloadUrl, cleanupJob } from "@/lib/api";
+import {
+  createCd,
+  getBuildStatus,
+  getDownloadUrl,
+  getKpacsDownloadUrl,
+  cleanupJob,
+} from "@/lib/api";
 
 const BurnPanel = () => {
   const {
@@ -70,6 +76,7 @@ const BurnPanel = () => {
         series: selectedSeries.length > 0 ? selectedSeries : undefined,
         expected_instances: expectedInstances > 0 ? expectedInstances : undefined,
         include_viewer: true,
+        include_kpacs: true,
       });
 
       setBuildJob({
@@ -79,6 +86,9 @@ const BurnPanel = () => {
         message: "Job queued...",
         filename: null,
         download_ready: false,
+        kpacs_filename: null,
+        kpacs_download_ready: false,
+        kpacs_error: null,
         retrieved_instances: 0,
         expected_instances: expectedInstances > 0 ? expectedInstances : null,
       });
@@ -111,6 +121,11 @@ const BurnPanel = () => {
   const handleDownload = useCallback(() => {
     if (!buildJob?.job_id) return;
     window.open(getDownloadUrl(buildJob.job_id), "_blank");
+  }, [buildJob]);
+
+  const handleDownloadKpacs = useCallback(() => {
+    if (!buildJob?.job_id) return;
+    window.open(getKpacsDownloadUrl(buildJob.job_id), "_blank");
   }, [buildJob]);
 
   const handleClose = useCallback(async () => {
@@ -231,7 +246,7 @@ const BurnPanel = () => {
                     <Typography variant="body2" className="font-medium">
                       {buildJob.filename}
                     </Typography>
-                    ISO is ready. Download it and burn to CD/DVD on your PC.
+                    OHIF viewer ISO is ready. Download it and burn to CD/DVD on your PC.
                   </Alert>
                   <Button
                     variant="contained"
@@ -245,6 +260,36 @@ const BurnPanel = () => {
                   >
                     Download ISO to My PC
                   </Button>
+                  {buildJob.status === "complete" && buildJob.kpacs_error && (
+                    <Alert severity="warning" className="mt-2" role="alert">
+                      <Typography variant="body2" className="font-medium">
+                        K-PACS ISO not available
+                      </Typography>
+                      <Typography variant="body2" className="mt-1">
+                        {buildJob.kpacs_error}
+                      </Typography>
+                    </Alert>
+                  )}
+                  {buildJob.kpacs_download_ready && (
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="large"
+                      fullWidth
+                      className="mt-3 cursor-pointer"
+                      startIcon={<DownloadIcon />}
+                      onClick={handleDownloadKpacs}
+                      aria-label="Download K-PACS disc ISO file"
+                    >
+                      Download K-PACS to My PC
+                    </Button>
+                  )}
+                  {buildJob.kpacs_download_ready && buildJob.kpacs_filename && (
+                    <Typography variant="caption" className="mt-1 block text-center text-gray-600">
+                      {buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer
+                      on disc)
+                    </Typography>
+                  )}
                   <Typography
                     variant="body2"
                     className="mt-3 block text-center text-gray-700 font-medium"

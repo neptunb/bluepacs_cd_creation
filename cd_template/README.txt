@@ -29,7 +29,7 @@ terminal/command window that appeared.
 
 CONTENTS:
 -----------------------------------------------
-  STUDY/           - Your DICOM image files
+  DICOM/           - Your DICOM image files
   viewer/          - Image viewer application
   windows_view.exe - Windows launcher
   macos_view       - macOS launcher

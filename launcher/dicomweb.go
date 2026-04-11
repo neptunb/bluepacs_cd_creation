@@ -33,19 +33,19 @@ type DicomFile struct {
 }
 
 type DicomWebHandler struct {
-	studyDir string
+	dicomDir string
 	files    []DicomFile
 	once     sync.Once
 }
 
-func NewDicomWebHandler(studyDir string) *DicomWebHandler {
-	return &DicomWebHandler{studyDir: studyDir}
+func NewDicomWebHandler(dicomDir string) *DicomWebHandler {
+	return &DicomWebHandler{dicomDir: dicomDir}
 }
 
 func (h *DicomWebHandler) loadFiles() {
 	h.once.Do(func() {
 		log.Println("Scanning DICOM files...")
-		filepath.Walk(h.studyDir, func(path string, info os.FileInfo, err error) error {
+		filepath.Walk(h.dicomDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}

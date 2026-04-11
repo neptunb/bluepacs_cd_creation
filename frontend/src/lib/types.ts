@@ -41,6 +41,9 @@ export interface BuildJob {
   message: string;
   filename: string | null;
   download_ready: boolean;
+  kpacs_filename: string | null;
+  kpacs_download_ready: boolean;
+  kpacs_error: string | null;
   retrieved_instances: number;
   expected_instances: number | null;
 }

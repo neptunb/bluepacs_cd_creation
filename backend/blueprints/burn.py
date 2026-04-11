@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+from pathlib import Path
 from threading import Lock
 
 from sanic import Blueprint, json as json_response
@@ -17,6 +18,45 @@ burn_bp = Blueprint("burn")
 
 active_jobs: dict[str, dict] = {}
 job_locks: dict[str, Lock] = {}
+
+
+def _resolve_backend_relative(path_str: str) -> str:
+    """Resolve paths like ../cd_template/viewer relative to the backend package root."""
+    p = Path(path_str)
+    if p.is_absolute():
+        return str(p.resolve())
+    backend_root = Path(__file__).resolve().parent.parent
+    return str((backend_root / p).resolve())
+
+
+def _resolve_kpacs_template_path(path_str: str) -> str:
+    """Resolve K-PACS template dir.
+
+    Local dev: backend lives in repo/backend, so ../cd_template/kpacs works.
+    Docker (backend/Dockerfile): app root is /app, so ../cd_template/kpacs wrongly becomes
+    /cd_template/kpacs; the compose volume mounts templates at /app/cd_template/kpacs instead.
+    """
+    backend_root = Path(__file__).resolve().parent.parent
+    raw = Path((path_str or ".").strip())
+    candidates: list[str] = []
+
+    if raw.is_absolute():
+        candidates.append(str(raw.resolve()))
+    else:
+        candidates.append(str((backend_root / raw).resolve()))
+
+    candidates.append(str((backend_root / "cd_template" / "kpacs").resolve()))
+
+    seen: set[str] = set()
+    for c in candidates:
+        if c in seen:
+            continue
+        seen.add(c)
+        if os.path.isdir(c):
+            logger.info("Using K-PACS template directory: %s", c)
+            return c
+
+    return candidates[0]
 
 
 @burn_bp.route("/create", methods=["POST"])
@@ -39,6 +79,9 @@ async def create_cd(request: Request):
         "message": "Job queued",
         "output_path": None,
         "filename": None,
+        "kpacs_output_path": None,
+        "kpacs_filename": None,
+        "kpacs_error": None,
         "retrieved_instances": 0,
         "expected_instances": burn_req.expected_instances,
     }
@@ -59,6 +102,7 @@ async def get_status(request: Request, job_id: str):
     if not job:
         return json_response({"error": "Job not found"}, status=404)
 
+    kpacs_path = job.get("kpacs_output_path")
     return json_response({
         "job_id": job_id,
         "status": job["status"],
@@ -66,6 +110,9 @@ async def get_status(request: Request, job_id: str):
         "message": job["message"],
         "filename": job["filename"],
         "download_ready": job["status"] == "complete" and job["output_path"] is not None,
+        "kpacs_filename": job.get("kpacs_filename"),
+        "kpacs_download_ready": job["status"] == "complete" and bool(kpacs_path),
+        "kpacs_error": job.get("kpacs_error"),
         "retrieved_instances": job.get("retrieved_instances", 0),
         "expected_instances": job.get("expected_instances"),
     })
@@ -95,18 +142,48 @@ async def download_iso(request: Request, job_id: str):
     )
 
 
+@burn_bp.route("/download-kpacs/<job_id:str>", methods=["GET"])
+async def download_kpacs_iso(request: Request, job_id: str):
+    job = active_jobs.get(job_id)
+    if not job:
+        return json_response({"error": "Job not found"}, status=404)
+
+    if job["status"] != "complete":
+        return json_response({"error": "K-PACS ISO not ready yet"}, status=409)
+
+    kpacs_path = job.get("kpacs_output_path")
+    if not kpacs_path or not os.path.exists(kpacs_path):
+        err = job.get("kpacs_error") or "K-PACS ISO was not produced for this job"
+        return json_response({"error": err}, status=404)
+
+    filename = job.get("kpacs_filename") or "kpacs_disc.iso"
+
+    return await file_stream(
+        kpacs_path,
+        mime_type="application/x-iso9660-image",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 @burn_bp.route("/cleanup/<job_id:str>", methods=["POST"])
 async def cleanup_job(request: Request, job_id: str):
     job = active_jobs.get(job_id)
     if not job:
         return json_response({"error": "Job not found"}, status=404)
 
-    if job["output_path"] and os.path.exists(job["output_path"]):
-        try:
-            os.remove(job["output_path"])
-            logger.info("Cleaned up ISO: %s", job["output_path"])
-        except OSError as e:
-            logger.warning("Failed to clean up ISO: %s", e)
+    for label, path_key in (
+        ("OHIF ISO", "output_path"),
+        ("K-PACS ISO", "kpacs_output_path"),
+    ):
+        path = job.get(path_key)
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+                logger.info("Cleaned up %s: %s", label, path)
+            except OSError as e:
+                logger.warning("Failed to clean up %s: %s", label, e)
 
     del active_jobs[job_id]
     job_locks.pop(job_id, None)
@@ -122,6 +199,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
         job["progress"] = 0.05
 
         orthanc_user, orthanc_password = config.orthanc_http_credentials(node)
+        kpacs_tpl = _resolve_kpacs_template_path(config.KPACS_TEMPLATE_PATH)
         builder = CdBuilderService(
             local_ae=config.local_ae_title,
             local_port=config.local_port,
@@ -134,6 +212,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             orthanc_url=node.get("orthanc_url", ""),
             orthanc_user=orthanc_user,
             orthanc_password=orthanc_password,
+            kpacs_template_path=kpacs_tpl,
         )
 
         expected_instances = burn_req.expected_instances or 0
@@ -175,12 +254,43 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
         )
 
         filename = os.path.basename(output_path)
-
-        job["status"] = "complete"
-        job["message"] = "ISO ready — download it and burn to CD on your PC"
-        job["progress"] = 1.0
         job["output_path"] = output_path
         job["filename"] = filename
+
+        if burn_req.include_kpacs:
+            job["message"] = "Building K-PACS disc image (DICOMDIR + viewer)..."
+            job["progress"] = 0.95
+            try:
+                kpacs_path = await builder.build_kpacs_iso(
+                    work_dir=work_dir,
+                    patient_name=burn_req.patient_name,
+                    patient_id=burn_req.patient_id,
+                )
+                job["kpacs_output_path"] = kpacs_path
+                job["kpacs_filename"] = os.path.basename(kpacs_path)
+                job["kpacs_error"] = None
+            except Exception as kpacs_exc:
+                logger.exception("K-PACS ISO build failed")
+                job["kpacs_output_path"] = None
+                job["kpacs_filename"] = None
+                job["kpacs_error"] = str(kpacs_exc)
+        else:
+            job["kpacs_error"] = None
+
+        job["status"] = "complete"
+        job["progress"] = 1.0
+        if job.get("kpacs_error"):
+            job["message"] = (
+                "OHIF ISO is ready below. K-PACS ISO failed — see the message under "
+                "the K-PACS download button."
+            )
+        elif burn_req.include_kpacs and job.get("kpacs_output_path"):
+            job["message"] = (
+                "Both disc images are ready: OHIF viewer ISO and K-PACS layout ISO "
+                "(download below)."
+            )
+        else:
+            job["message"] = "ISO ready — download it and burn to CD on your PC"
 
     except Exception as e:
         job["status"] = "error"

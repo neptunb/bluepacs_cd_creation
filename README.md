@@ -21,7 +21,7 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
               ┌───────▼────────┐
               │   CD Contents  │
               ├────────────────┤
-              │ STUDY/         │ ← DICOM files
+              │ DICOM/         │ ← DICOM files
               │ viewer/        │ ← OHIF 3.11 static build
               │ windows_view.exe│ ← Go launcher (Windows)
               │ macos_view     │ ← Go launcher (macOS)
@@ -44,19 +44,21 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
 - **Sanic Python** REST API
 - DICOM Query/Retrieve (C-FIND, C-MOVE, C-GET) via pynetdicom
 - ISO image creation using pycdlib (user downloads and burns locally)
+- Optional **K-PACS Lite** second ISO: copies viewer binaries from [`cd_template/kpacs/`](cd_template/kpacs), copies the same retrieved `DICOM/` tree into a K-PACS staging folder, and runs **DCMTK `dcmmkdir`** to create a root `DICOMDIR` (install DCMTK and ensure `dcmmkdir` is on `PATH`; override template path with `KPACS_TEMPLATE_PATH` if needed)
 - DICOM node (AE Title) management
 
 ### 3. Go Launcher (`/launcher`)
 - Portable executables for Windows, macOS, Linux
 - Starts embedded HTTP server on localhost
 - Serves OHIF viewer static files
-- Implements minimal DICOMweb (WADO-RS/QIDO-RS) from local STUDY/ folder
+- Implements minimal DICOMweb (WADO-RS/QIDO-RS) from local `DICOM/` folder
 - Opens default browser automatically
 - Zero installation required
 
 ### 4. CD Template (`/cd_template`)
 - Directory structure template for burned CDs
 - OHIF 3.11 static viewer build
+- K-PACS Lite Windows viewer and DLLs (no patient DICOM)
 - Patient-facing instructions
 
 ## How It Works
@@ -64,9 +66,11 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
 ### For Hospital Staff:
 1. Search for patient in PACS/Horos via the web app
 2. Select studies and series to include
-3. Click "Build ISO" — the server retrieves DICOM files, packages them with the viewer and launchers into an ISO
-4. Download the ISO to your PC
+3. Click "Build ISO" — the server retrieves DICOM files, packages them with the viewer and launchers into an ISO, and (when DCMTK is available) builds a second K-PACS-layout ISO
+4. Download the OHIF ISO and, when offered, the K-PACS ISO to your PC
 5. Burn the ISO to CD/DVD using your OS tools (right-click → "Burn disc image" on Windows, Disk Utility on macOS)
+
+**macOS Finder note:** The **K-PACS** ISO is built **without Rock Ridge** so Finder usually shows `DICOM/`, `K-Pacs-Lite.exe`, etc. The **OHIF** ISO keeps **Rock Ridge** (Unix execute bits for `macos_view` / `linux_view`); on some macOS versions Finder can show that volume as empty even though the image is not (use an archiver such as Keka/The Unarchiver, or mount with `hdiutil attach -nomount path.iso` and `mount_cd9660` on the correct slice).
 
 ### For Patients:
 1. Insert CD into computer
@@ -83,6 +87,7 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
 - Python 3.11+
 - Node.js 20+
 - Go 1.21+
+- **DCMTK** (`dcmmkdir` on `PATH`) if you want the K-PACS disc ISO when running the backend **outside** Docker (e.g. `brew install dcmtk` on macOS). The **backend Docker image** installs the `dcmtk` package so `dcmmkdir` is available inside the container.
 - CD/DVD burner (for actual burning)
 
 ### Setup

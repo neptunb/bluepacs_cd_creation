@@ -5,10 +5,13 @@ import logging
 import uuid
 import hashlib
 import unicodedata
+import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+import pydicom
 import pycdlib
+from pycdlib import pycdlibexception
 
 from services.dicom_retrieve import DicomRetrieveService
 
@@ -16,9 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 def _iso_component(name: str, max_len: int = 30) -> str:
-    """Return a deterministic ISO9660-safe path component."""
+    """Return a deterministic ISO9660-safe path component.
+
+    pycdlib enforces strict ISO9660 names (A–Z, 0–9, underscore only). Hyphens and
+    dots in the source filename must not appear here; Joliet carries readable names.
+    """
     ascii_name = _ascii_safe_text(name).upper()
-    cleaned = "".join(ch for ch in ascii_name if ch.isalnum() or ch in ("_", "-"))
+    cleaned = "".join(ch for ch in ascii_name if ch.isalnum() or ch == "_")
     if not cleaned:
         cleaned = "X"
     if len(cleaned) <= max_len:
@@ -34,6 +41,38 @@ def _iso_path_from_rel(rel_path: str) -> str:
     if not safe:
         return "/"
     return "/" + "/".join(safe)
+
+
+# Characters unsafe in Joliet / Windows paths (and path separators).
+_JOLIET_BAD = frozenset(':*?"<>|\\\x00')
+
+
+def _joliet_segment(name: str, max_len: int = 64) -> str:
+    """One path component for Joliet (Windows-friendly listing); keeps .exe, .dll, etc."""
+    n = unicodedata.normalize("NFKC", name or "").strip() or "X"
+    out: list[str] = []
+    for ch in n:
+        if ch in _JOLIET_BAD or ord(ch) < 32:
+            out.append("_")
+        else:
+            out.append(ch)
+    n = "".join(out).strip() or "X"
+    if len(n) > max_len:
+        root, ext = os.path.splitext(n)
+        if ext and 1 <= len(ext) <= 16:
+            room = max(1, max_len - len(ext))
+            n = (root[:room] + ext)[:max_len]
+        else:
+            n = n[:max_len]
+    return n
+
+
+def _joliet_path_from_rel(rel_path: str) -> str:
+    """Absolute Joliet path with readable names (Finder / Explorer), unlike ISO9660-only mangling."""
+    parts = [p for p in rel_path.replace("\\", "/").split("/") if p and p != "."]
+    if not parts:
+        return "/"
+    return "/" + "/".join(_joliet_segment(p) for p in parts)
 
 
 def _ascii_safe_text(value: str) -> str:
@@ -53,6 +92,154 @@ def _rock_ridge_file_mode(filepath: str) -> int:
         return 0o644
 
 
+def _kpacs_launcher_exe_name(template_dir: str) -> str:
+    try:
+        names = sorted(
+            n for n in os.listdir(template_dir) if n.lower().endswith(".exe")
+        )
+    except OSError as e:
+        raise RuntimeError(f"Cannot read K-PACS template directory: {template_dir}") from e
+    if not names:
+        raise RuntimeError(
+            f"K-PACS template has no .exe launcher (expected under {template_dir})"
+        )
+    return names[0]
+
+
+def _write_kpacs_autorun(staging_dir: str, launcher_exe: str) -> None:
+    path = os.path.join(staging_dir, "autorun.inf")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("[autorun]\n")
+        f.write(f"open={launcher_exe}\n")
+
+
+def _dicom_instance_sort_key(path: Path) -> tuple:
+    """Sort key for instances: InstanceNumber when present, else SOPInstanceUID, else filename."""
+    try:
+        ds = pydicom.dcmread(path, stop_before_pixels=True, force=True)
+        inst = getattr(ds, "InstanceNumber", None)
+        if inst is not None:
+            s = str(inst).strip()
+            if s.isdigit():
+                return (0, int(s), "")
+            try:
+                return (0, int(float(s)), "")
+            except ValueError:
+                return (1, 0, s)
+        sop = str(getattr(ds, "SOPInstanceUID", "") or "")
+        return (2, 0, sop)
+    except Exception:
+        return (3, 0, path.name)
+
+
+def _reorganize_dicom_tree_for_interchange(dicom_root: str) -> None:
+    """Rewrite DICOM/studyUID/seriesUID/*.dcm into S#####/SER#####/I##### for dcmmkdir (ISO 9660)."""
+    root = Path(dicom_root)
+    study_paths = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name)
+    if not study_paths:
+        raise RuntimeError(
+            "No study subfolders under DICOM; cannot build K-PACS interchange layout"
+        )
+
+    parent = root.parent
+    tmp = parent / f"_dicom_interchange_{uuid.uuid4().hex}"
+    tmp.mkdir()
+
+    try:
+        for si, study_path in enumerate(study_paths, start=1):
+            sdir = tmp / f"S{si:05d}"
+            series_paths = sorted(
+                [p for p in study_path.iterdir() if p.is_dir()],
+                key=lambda p: p.name,
+            )
+            if not series_paths:
+                ser_dest = sdir / "SER00001"
+                ser_dest.mkdir(parents=True, exist_ok=True)
+                files = sorted(
+                    [p for p in study_path.iterdir() if p.is_file()],
+                    key=_dicom_instance_sort_key,
+                )
+                for ii, fp in enumerate(files, start=1):
+                    dest = ser_dest / f"I{ii:05d}"
+                    shutil.copy2(fp, dest)
+                continue
+
+            for seri, ser_path in enumerate(series_paths, start=1):
+                ser_name = f"SER{seri:05d}"
+                if len(ser_name) > 8:
+                    raise RuntimeError(
+                        "Too many series in one study for K-PACS interchange naming (max 99999)"
+                    )
+                ser_dest = sdir / ser_name
+                ser_dest.mkdir(parents=True, exist_ok=True)
+                files = sorted(
+                    [p for p in ser_path.iterdir() if p.is_file()],
+                    key=_dicom_instance_sort_key,
+                )
+                for ii, fp in enumerate(files, start=1):
+                    dest = ser_dest / f"I{ii:05d}"
+                    shutil.copy2(fp, dest)
+
+        shutil.rmtree(dicom_root)
+        shutil.move(str(tmp), str(dicom_root))
+        logger.info(
+            "Reorganized %d stud(ies) under %s for DICOMDIR interchange naming",
+            len(study_paths),
+            dicom_root,
+        )
+    except BaseException:
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        raise
+
+
+def _copy_kpacs_template_files(template_dir: str, staging_dir: str) -> None:
+    """Copy root-level template files (no subdirs) and write autorun.inf for the launcher .exe.
+
+    K-Pacs Lite files in the template are third-party legacy software; redistribution is the site's responsibility.
+    """
+    launcher = _kpacs_launcher_exe_name(template_dir)
+    for name in os.listdir(template_dir):
+        src = os.path.join(template_dir, name)
+        if not os.path.isfile(src):
+            continue
+        shutil.copy2(src, os.path.join(staging_dir, name))
+    _write_kpacs_autorun(staging_dir, launcher)
+
+
+def _generate_dicomdir_dcmtk(staging_dir: str) -> None:
+    dcmmkdir = shutil.which("dcmmkdir")
+    if not dcmmkdir:
+        raise RuntimeError(
+            "K-PACS ISO requires a root DICOMDIR. Install DCMTK and ensure `dcmmkdir` is on "
+            "PATH (e.g. `brew install dcmtk` on macOS, `apt install dcmtk` on Debian/Ubuntu). "
+            "If you run the backend in Docker, rebuild the image so the Dockerfile can install "
+            "the `dcmtk` package."
+        )
+    dicom_root = os.path.join(staging_dir, "DICOM")
+    if not os.path.isdir(dicom_root):
+        raise RuntimeError("Internal error: staging DICOM folder missing for DICOMDIR")
+
+    cmd = [
+        dcmmkdir,
+        "+r",
+        "+I",
+        "-Nxc",
+        "+D",
+        "DICOMDIR",
+        "DICOM",
+    ]
+    proc = subprocess.run(
+        cmd,
+        cwd=staging_dir,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip() or "no stderr"
+        raise RuntimeError(f"dcmmkdir failed (exit {proc.returncode}): {detail}")
+
+
 class CdBuilderService:
     """Builds a CD/DVD ISO image containing DICOM files, OHIF viewer, and launchers."""
 
@@ -69,6 +256,7 @@ class CdBuilderService:
         orthanc_url: str = "",
         orthanc_user: str = "",
         orthanc_password: str = "",
+        kpacs_template_path: str = "",
     ):
         self.retriever = DicomRetrieveService(
             local_ae=local_ae,
@@ -83,6 +271,7 @@ class CdBuilderService:
         self.temp_dir = temp_dir
         self.viewer_path = viewer_path
         self.launcher_path = launcher_path
+        self.kpacs_template_path = kpacs_template_path
 
     async def retrieve_studies(
         self,
@@ -91,13 +280,13 @@ class CdBuilderService:
         on_instance_retrieved: Optional[Callable[[int], None]] = None,
     ) -> str:
         work_dir = os.path.join(self.temp_dir, str(uuid.uuid4()))
-        study_dir = os.path.join(work_dir, "STUDY")
-        os.makedirs(study_dir, exist_ok=True)
+        dicom_dir = os.path.join(work_dir, "DICOM")
+        os.makedirs(dicom_dir, exist_ok=True)
         total_files = 0
         per_study_counts: dict[str, int] = {}
 
         for study_uid in study_uids:
-            output = os.path.join(study_dir, study_uid)
+            output = os.path.join(dicom_dir, study_uid)
             prior_total = total_files
             count = await self.retriever.retrieve_study(
                 study_instance_uid=study_uid,
@@ -192,56 +381,189 @@ class CdBuilderService:
         iso_filename = f"DICOM_{safe_name}_{safe_patient_id}.iso"
         iso_path = os.path.join(self.temp_dir, iso_filename)
 
-        _create_iso(work_dir, iso_path, patient_name)
+        _create_iso(work_dir, iso_path, patient_name, rock_ridge="1.09")
 
         return iso_path
 
+    async def build_kpacs_iso(
+        self,
+        work_dir: str,
+        patient_name: str,
+        patient_id: str,
+    ) -> str:
+        """Build a second ISO with K-PACS layout: DICOM mirror, template viewer, DICOMDIR."""
+        dicom_src = os.path.join(work_dir, "DICOM")
+        if not os.path.isdir(dicom_src):
+            raise RuntimeError("No DICOM folder found; cannot build K-PACS ISO")
 
-def _create_iso(source_dir: str, iso_path: str, volume_label: str):
+        tpl = self.kpacs_template_path
+        if not tpl or not os.path.isdir(tpl):
+            raise RuntimeError(
+                f"K-PACS template directory missing or invalid: {tpl or '(not configured)'}"
+            )
+
+        staging = os.path.join(self.temp_dir, f"kpacs_stage_{uuid.uuid4()}")
+        try:
+            dicom_dest = os.path.join(staging, "DICOM")
+            shutil.copytree(dicom_src, dicom_dest, symlinks=False)
+            _reorganize_dicom_tree_for_interchange(dicom_dest)
+            _copy_kpacs_template_files(tpl, staging)
+            _generate_dicomdir_dcmtk(staging)
+
+            safe_name = "".join(
+                c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
+            )[:32]
+            safe_patient_id = "".join(
+                c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
+            )[:32] or "UNKNOWNID"
+            iso_filename = f"KPACS_{safe_name}_{safe_patient_id}.iso"
+            iso_path = os.path.join(self.temp_dir, iso_filename)
+
+            # No Rock Ridge: K-PACS is Windows-only; macOS Finder often shows RR-heavy ISOs as empty.
+            _create_iso(staging, iso_path, patient_name, rock_ridge=None)
+            return iso_path
+        finally:
+            if os.path.isdir(staging):
+                try:
+                    shutil.rmtree(staging)
+                except OSError as e:
+                    logger.warning("Could not remove K-PACS staging %s: %s", staging, e)
+
+
+def _create_iso(
+    source_dir: str,
+    iso_path: str,
+    volume_label: str,
+    rock_ridge: Optional[str] = "1.09",
+):
+    """Write ISO9660 + Joliet; optional Rock Ridge (needed for Unix execute bits on OHIF launchers).
+
+    If rock_ridge is None, the image is Windows-friendly and usually lists correctly in macOS Finder.
+    With Rock Ridge, some macOS versions mount the volume as empty in Finder even though data is present
+    (workaround: ``mount_cd9660 -r`` or open the ISO with a tool that reads ISO9660/Joliet).
+    """
+    source_dir = os.path.abspath(os.path.realpath(source_dir))
+    if not os.path.isdir(source_dir):
+        raise RuntimeError(f"ISO source path is not a directory: {source_dir}")
+
+    expected_files = sum(len(files) for _, _, files in os.walk(source_dir))
+    if expected_files == 0:
+        raise RuntimeError(
+            f"Refusing to build an empty ISO: no files under {source_dir}. "
+            "Check retrieve paths and viewer template."
+        )
+
+    use_rr = bool(rock_ridge)
     iso = pycdlib.PyCdlib()
     iso.new(
         interchange_level=3,
         joliet=3,
-        rock_ridge="1.09",
+        rock_ridge=rock_ridge,
         vol_ident=_iso_component(volume_label, max_len=32),
     )
+
+    files_added = 0
+    errors: list[str] = []
+    dirs_registered: set[str] = set()
 
     for root, dirs, files in os.walk(source_dir):
         rel_root = os.path.relpath(root, source_dir)
 
         if rel_root != ".":
             iso_dir = _iso_path_from_rel(rel_root)
-            joliet_dir = _iso_path_from_rel(rel_root)
-            rr_name = _ascii_safe_text(os.path.basename(rel_root))[:128]
-            try:
-                iso.add_directory(
-                    iso_path=iso_dir,
-                    joliet_path=joliet_dir,
-                    rr_name=rr_name,
-                    file_mode=0o755,
-                )
-            except Exception as e:
-                logger.warning("Could not add directory %s to ISO: %s", rel_root, e)
-                continue
+            joliet_dir = _joliet_path_from_rel(rel_root)
+            if iso_dir not in dirs_registered:
+                try:
+                    if use_rr:
+                        iso.add_directory(
+                            iso_path=iso_dir,
+                            joliet_path=joliet_dir,
+                            rr_name=_ascii_safe_text(os.path.basename(rel_root))[:128],
+                            file_mode=0o755,
+                        )
+                    else:
+                        iso.add_directory(
+                            iso_path=iso_dir,
+                            joliet_path=joliet_dir,
+                        )
+                    dirs_registered.add(iso_dir)
+                except pycdlibexception.PyCdlibInvalidInput as e:
+                    el = str(e).lower()
+                    if "already" in el or "duplicate" in el:
+                        dirs_registered.add(iso_dir)
+                    else:
+                        msg = f"directory {rel_root}: {e}"
+                        errors.append(msg)
+                        logger.warning("Could not add directory %s to ISO: %s", rel_root, e)
+                except Exception as e:
+                    msg = f"directory {rel_root}: {e}"
+                    errors.append(msg)
+                    logger.warning("Could not add directory %s to ISO: %s", rel_root, e)
+            # Never skip files here: a failed mkdir must not drop the whole subtree.
 
         for filename in files:
             filepath = os.path.join(root, filename)
             rel_path = os.path.relpath(filepath, source_dir)
 
             iso_name = _iso_path_from_rel(rel_path)
-            joliet_name = _iso_path_from_rel(rel_path)
+            joliet_name = _joliet_path_from_rel(rel_path)
             rr_name = _ascii_safe_text(filename)[:128]
+            fmode = _rock_ridge_file_mode(filepath)
 
             try:
-                iso.add_file(
-                    filepath,
-                    iso_path=f"{iso_name};1",
-                    joliet_path=joliet_name,
-                    rr_name=rr_name,
-                    file_mode=_rock_ridge_file_mode(filepath),
-                )
+                if use_rr:
+                    iso.add_file(
+                        filepath,
+                        iso_path=f"{iso_name};1",
+                        joliet_path=joliet_name,
+                        rr_name=rr_name,
+                        file_mode=fmode,
+                    )
+                else:
+                    iso.add_file(
+                        filepath,
+                        iso_path=f"{iso_name};1",
+                        joliet_path=joliet_name,
+                    )
+                files_added += 1
+            except pycdlibexception.PyCdlibInvalidInput as e:
+                if joliet_name and "joliet" in str(e).lower():
+                    try:
+                        if use_rr:
+                            iso.add_file(
+                                filepath,
+                                iso_path=f"{iso_name};1",
+                                rr_name=rr_name,
+                                file_mode=fmode,
+                            )
+                        else:
+                            iso.add_file(filepath, iso_path=f"{iso_name};1")
+                        files_added += 1
+                    except Exception as e2:
+                        msg = f"file {rel_path}: {e2}"
+                        errors.append(msg)
+                        logger.warning("Could not add file %s to ISO: %s", filepath, e2)
+                else:
+                    msg = f"file {rel_path}: {e}"
+                    errors.append(msg)
+                    logger.warning("Could not add file %s to ISO: %s", filepath, e)
             except Exception as e:
+                msg = f"file {rel_path}: {e}"
+                errors.append(msg)
                 logger.warning("Could not add file %s to ISO: %s", filepath, e)
+
+    if files_added == 0:
+        tail = "\n".join(errors[:25]) if errors else "(no per-file errors recorded)"
+        raise RuntimeError(
+            f"ISO build added 0 of {expected_files} file(s). "
+            f"First messages:\n{tail}"
+        )
+    if files_added < expected_files:
+        logger.warning(
+            "ISO incomplete: added %d of %d file(s); see prior warnings",
+            files_added,
+            expected_files,
+        )
 
     iso.write(iso_path)
     iso.close()
