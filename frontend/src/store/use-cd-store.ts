@@ -18,8 +18,9 @@ interface CdStore {
   selectedStudies: string[];
   studiesLoading: boolean;
   latestStudiesMode: boolean;
+  recentStudiesLabel: string;
   setStudies: (studies: Study[]) => void;
-  loadLatestStudies: (studies: Study[]) => void;
+  loadLatestStudies: (studies: Study[], label?: string) => void;
   toggleStudySelection: (studyUid: string) => void;
   selectAllStudies: () => void;
   clearStudySelection: () => void;
@@ -55,6 +56,7 @@ export const useCdStore = create<CdStore>((set, get) => ({
       seriesMap: {},
       selectedSeries: [],
       latestStudiesMode: false,
+      recentStudiesLabel: "Latest studies",
     }),
   setPatientSearchLoading: (loading) => set({ patientSearchLoading: loading }),
 
@@ -62,10 +64,12 @@ export const useCdStore = create<CdStore>((set, get) => ({
   selectedStudies: [],
   studiesLoading: false,
   latestStudiesMode: false,
+  recentStudiesLabel: "Latest studies",
   setStudies: (studies) => set({ studies }),
-  loadLatestStudies: (studies) =>
+  loadLatestStudies: (studies, label) =>
     set({
       latestStudiesMode: true,
+      recentStudiesLabel: label ?? "Latest studies",
       selectedPatient: null,
       studies,
       selectedStudies: [],
@@ -115,5 +119,6 @@ export const useCdStore = create<CdStore>((set, get) => ({
       selectedSeries: [],
       buildJob: null,
       latestStudiesMode: false,
+      recentStudiesLabel: "Latest studies",
     }),
 }));

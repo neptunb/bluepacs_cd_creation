@@ -52,10 +52,18 @@ export const fetchSeries = async (
 export const fetchRecentStudies = async (params: {
   node_ae_title: string;
   limit?: number;
+  study_date_from?: string;
+  study_date_to?: string;
 }): Promise<Study[]> => {
   const response = await api.post("/studies/recent", {
     node_ae_title: params.node_ae_title,
     limit: params.limit ?? 10,
+    ...(params.study_date_from != null && params.study_date_from !== ""
+      ? { study_date_from: params.study_date_from }
+      : {}),
+    ...(params.study_date_to != null && params.study_date_to !== ""
+      ? { study_date_to: params.study_date_to }
+      : {}),
   });
   return response.data.studies;
 };

@@ -34,6 +34,7 @@ const StudyBrowser = () => {
     selectedNode,
     selectedPatient,
     latestStudiesMode,
+    recentStudiesLabel,
     studies,
     selectedStudies,
     studiesLoading,
@@ -111,7 +112,7 @@ const StudyBrowser = () => {
         <Typography variant="h6" className="flex items-center gap-2">
           <FolderIcon />
           {latestStudiesMode
-            ? `Latest studies — ${selectedNode.name || selectedNode.ae_title}`
+            ? `${recentStudiesLabel} — ${selectedNode.name || selectedNode.ae_title}`
             : `Studies for ${selectedPatient?.patient_name ?? ""}`}
         </Typography>
         <Box className="flex gap-2">

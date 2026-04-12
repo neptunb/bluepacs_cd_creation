@@ -276,6 +276,30 @@ class OrthancApiService:
         t = (main.get("StudyTime") or "000000").replace(":", "")[:6]
         return (d, t)
 
+    @staticmethod
+    def _study_date_cmp_value(item: dict) -> str:
+        main = item.get("MainDicomTags", {})
+        return (main.get("StudyDate") or "").replace("-", "")[:8]
+
+    def _study_matches_date_window(
+        self,
+        item: dict,
+        study_date_from: Optional[str],
+        study_date_to: Optional[str],
+    ) -> bool:
+        d_from = (study_date_from or "").strip()
+        d_to = (study_date_to or "").strip()
+        if not d_from and not d_to:
+            return True
+        raw = self._study_date_cmp_value(item)
+        if len(raw) < 8:
+            return False
+        if d_from and raw < d_from:
+            return False
+        if d_to and raw > d_to:
+            return False
+        return True
+
     def _study_row_from_item(self, item: dict) -> dict:
         main = item.get("MainDicomTags", {})
         patient_main = item.get("PatientMainDicomTags", {})
@@ -318,7 +342,12 @@ class OrthancApiService:
             "patient_name": patient_main.get("PatientName", ""),
         }
 
-    async def _find_recent_via_study_list(self, limit: int) -> list[dict]:
+    async def _find_recent_via_study_list(
+        self,
+        limit: int,
+        study_date_from: Optional[str] = None,
+        study_date_to: Optional[str] = None,
+    ) -> list[dict]:
         """Bypass ``/tools/find`` when Orthanc's indexed search returns no candidates."""
         max_scan = max(1, config.ORTHANC_RECENT_STUDIES_MAX_SCAN)
         conc = max(1, min(128, config.ORTHANC_RECENT_STUDIES_CONCURRENCY))
@@ -397,6 +426,12 @@ class OrthancApiService:
             return []
 
         details.sort(key=self._study_sort_key, reverse=True)
+        if (study_date_from or "").strip() or (study_date_to or "").strip():
+            details = [
+                d
+                for d in details
+                if self._study_matches_date_window(d, study_date_from, study_date_to)
+            ]
         rows = [self._study_row_from_study_resource(d) for d in details[:limit]]
         logger.info(
             "Orthanc fallback: sorted %d studies with tags, returning %d newest",
@@ -405,7 +440,12 @@ class OrthancApiService:
         )
         return rows
 
-    async def find_recent_studies(self, limit: int = 10) -> list[dict]:
+    async def find_recent_studies(
+        self,
+        limit: int = 10,
+        study_date_from: Optional[str] = None,
+        study_date_to: Optional[str] = None,
+    ) -> list[dict]:
         """Return the newest studies (by StudyDate / StudyTime), newest first.
 
         Note: With MySQL indexing, ``/tools/find`` often yields **0 candidates** (Orthanc fast
@@ -413,10 +453,24 @@ class OrthancApiService:
         ``GET /studies`` and fetch ``GET /studies/{id}`` to sort by StudyDate (see config
         ``ORTHANC_RECENT_STUDIES_MAX_SCAN``).
         """
-        limit = max(1, min(limit, 100))
-        end_d = date.today()
-        start_d = end_d - timedelta(days=365 * 20)
-        study_date_range = f"{start_d.strftime('%Y%m%d')}-{end_d.strftime('%Y%m%d')}"
+        df = (study_date_from or "").strip()
+        dt = (study_date_to or "").strip()
+        has_date_window = bool(df or dt)
+        if has_date_window:
+            limit = max(1, min(limit, 2000))
+        else:
+            limit = max(1, min(limit, 100))
+
+        if df and dt:
+            study_date_range = f"{df}-{dt}"
+        elif df:
+            study_date_range = f"{df}-"
+        elif dt:
+            study_date_range = f"-{dt}"
+        else:
+            end_d = date.today()
+            start_d = end_d - timedelta(days=365 * 20)
+            study_date_range = f"{start_d.strftime('%Y%m%d')}-{end_d.strftime('%Y%m%d')}"
 
         # Max items to sort when falling back to broad wildcards (avoids huge RAM use).
         max_sort_batch = 8000
@@ -493,6 +547,12 @@ class OrthancApiService:
                 results = results[:max_sort_batch]
 
             sorted_items = sorted(results, key=self._study_sort_key, reverse=True)
+            if has_date_window:
+                sorted_items = [
+                    it
+                    for it in sorted_items
+                    if self._study_matches_date_window(it, df, dt)
+                ]
             rows = [self._study_row_from_item(item) for item in sorted_items[:limit]]
             logger.info(
                 "Orthanc recent studies: returning %d of %d collected (strategy log above)",
@@ -505,7 +565,9 @@ class OrthancApiService:
             "Orthanc recent studies: /tools/find returned no rows; "
             "using GET /studies + per-study metadata fallback"
         )
-        return await self._find_recent_via_study_list(limit)
+        return await self._find_recent_via_study_list(
+            limit, study_date_from=df or None, study_date_to=dt or None
+        )
 
     async def find_series(self, study_instance_uid: str) -> list[dict]:
         query = {"StudyInstanceUID": study_instance_uid}

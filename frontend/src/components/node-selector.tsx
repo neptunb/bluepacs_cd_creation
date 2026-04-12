@@ -19,6 +19,7 @@ import WifiIcon from "@mui/icons-material/Wifi";
 import WifiOffIcon from "@mui/icons-material/WifiOff";
 import HistoryIcon from "@mui/icons-material/History";
 import { useCdStore } from "@/store/use-cd-store";
+import { format, subDays } from "date-fns";
 import { fetchNodes, echoNode, fetchRecentStudies } from "@/lib/api";
 import type { SelectChangeEvent } from "@mui/material";
 
@@ -79,10 +80,34 @@ const NodeSelector = () => {
         node_ae_title: selectedNode.ae_title,
         limit: 10,
       });
-      loadLatestStudies(data);
+      loadLatestStudies(data, "Latest studies");
     } catch (err) {
       console.error("Recent studies failed:", err);
       setRecentError("Could not load the latest studies for this node.");
+    } finally {
+      setRecentLoading(false);
+      setStudiesLoading(false);
+    }
+  };
+
+  const handleLastWeekStudies = async () => {
+    if (!selectedNode) return;
+    setRecentError(null);
+    setRecentLoading(true);
+    setStudiesLoading(true);
+    try {
+      const end = new Date();
+      const start = subDays(end, 6);
+      const data = await fetchRecentStudies({
+        node_ae_title: selectedNode.ae_title,
+        limit: 2000,
+        study_date_from: format(start, "yyyyMMdd"),
+        study_date_to: format(end, "yyyyMMdd"),
+      });
+      loadLatestStudies(data, "Last week studies");
+    } catch (err) {
+      console.error("Last week studies failed:", err);
+      setRecentError("Could not load last week's studies for this node.");
     } finally {
       setRecentLoading(false);
       setStudiesLoading(false);
@@ -179,6 +204,23 @@ const NodeSelector = () => {
         aria-label="Load latest 10 studies from selected node"
       >
         Latest 10 studies
+      </Button>
+      <Button
+        variant="outlined"
+        size="small"
+        startIcon={
+          recentLoading ? (
+            <CircularProgress color="inherit" size={16} />
+          ) : (
+            <HistoryIcon />
+          )
+        }
+        onClick={handleLastWeekStudies}
+        disabled={!selectedNode || recentLoading}
+        className="cursor-pointer"
+        aria-label="Load studies from the last seven days on the selected node"
+      >
+        LAST WEEK STUDIES
       </Button>
       </Box>
 

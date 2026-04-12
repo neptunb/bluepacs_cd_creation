@@ -15,7 +15,6 @@ studies_bp = Blueprint("studies")
 @studies_bp.route("/recent", methods=["POST"])
 async def recent_studies(request: Request):
     body = request.json or {}
-    print(f"body: {body}")
     ae_title = body.get("node_ae_title")
     if not ae_title:
         return json_response({"error": "node_ae_title is required"}, status=400)
@@ -25,6 +24,13 @@ async def recent_studies(request: Request):
     except (TypeError, ValueError):
         limit = 10
 
+    study_date_from = body.get("study_date_from")
+    study_date_to = body.get("study_date_to")
+    if study_date_from is not None:
+        study_date_from = str(study_date_from).strip() or None
+    if study_date_to is not None:
+        study_date_to = str(study_date_to).strip() or None
+
     node = config.get_node(ae_title)
     if not node:
         return json_response({"error": f"Unknown node: {ae_title}"}, status=404)
@@ -32,7 +38,11 @@ async def recent_studies(request: Request):
     service = _get_service(node)
 
     try:
-        studies = await service.find_recent_studies(limit=limit)
+        studies = await service.find_recent_studies(
+            limit=limit,
+            study_date_from=study_date_from,
+            study_date_to=study_date_to,
+        )
     except Exception as e:
         logger.exception("Recent studies failed for node %s", node["ae_title"])
         return json_response(

@@ -246,9 +246,20 @@ class DicomQueryService:
 
         return await asyncio.get_event_loop().run_in_executor(None, _find)
 
-    async def find_recent_studies(self, limit: int = 10) -> list[dict]:
+    async def find_recent_studies(
+        self,
+        limit: int = 10,
+        study_date_from: Optional[str] = None,
+        study_date_to: Optional[str] = None,
+    ) -> list[dict]:
         """C-FIND at STUDY level; sort by StudyDate/Time; return newest `limit` rows."""
-        limit = max(1, min(limit, 100))
+        has_date_window = bool(
+            (study_date_from or "").strip() or (study_date_to or "").strip()
+        )
+        if has_date_window:
+            limit = max(1, min(limit, 2000))
+        else:
+            limit = max(1, min(limit, 100))
 
         def _sort_key(row: dict) -> tuple:
             d = (row["study_date"] or "00000000").replace("-", "")[:8]
@@ -262,9 +273,20 @@ class DicomQueryService:
                 return []
 
             try:
-                end_d = date.today()
-                start_d = end_d - timedelta(days=365 * 10)
-                study_date_range = f"{start_d.strftime('%Y%m%d')}-{end_d.strftime('%Y%m%d')}"
+                df = (study_date_from or "").strip()
+                dt = (study_date_to or "").strip()
+                if df and dt:
+                    study_date_range = f"{df}-{dt}"
+                elif df:
+                    study_date_range = f"{df}-"
+                elif dt:
+                    study_date_range = f"-{dt}"
+                else:
+                    end_d = date.today()
+                    start_d = end_d - timedelta(days=365 * 10)
+                    study_date_range = (
+                        f"{start_d.strftime('%Y%m%d')}-{end_d.strftime('%Y%m%d')}"
+                    )
 
                 ds = Dataset()
                 ds.QueryRetrieveLevel = "STUDY"
@@ -280,8 +302,12 @@ class DicomQueryService:
                 ds.NumberOfStudyRelatedInstances = ""
 
                 logger.info(
-                    "C-FIND recent studies (limit=%s) → %s@%s:%d",
-                    limit, self.remote_ae, self.remote_host, self.remote_port,
+                    "C-FIND recent studies (limit=%s, StudyDate=%r) → %s@%s:%d",
+                    limit,
+                    study_date_range,
+                    self.remote_ae,
+                    self.remote_host,
+                    self.remote_port,
                 )
 
                 identifiers = self._cfind(assoc, ds)
