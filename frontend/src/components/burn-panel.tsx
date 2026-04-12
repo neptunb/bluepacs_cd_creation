@@ -20,6 +20,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
+import FolderZipIcon from "@mui/icons-material/FolderZip";
 import { useCdStore } from "@/store/use-cd-store";
 import {
   createCd,
@@ -61,62 +62,71 @@ const BurnPanel = () => {
     selectedStudies.length > 0 &&
     Boolean(burnPatientId);
 
-  const startBuild = useCallback(async () => {
-    if (!selectedNode || !burnPatientId) return;
+  const startBuild = useCallback(
+    async (opts: { studyZipOnly: boolean }) => {
+      if (!selectedNode || !burnPatientId) return;
 
-    setError(null);
-    setDialogOpen(true);
+      setError(null);
+      setDialogOpen(true);
 
-    try {
-      const { job_id } = await createCd({
-        node_ae_title: selectedNode.ae_title,
-        patient_id: burnPatientId,
-        patient_name: burnPatientName || "Patient",
-        studies: selectedStudies,
-        series: selectedSeries.length > 0 ? selectedSeries : undefined,
-        expected_instances: expectedInstances > 0 ? expectedInstances : undefined,
-        include_viewer: true,
-        include_kpacs: true,
-      });
+      try {
+        const { job_id } = await createCd({
+          node_ae_title: selectedNode.ae_title,
+          patient_id: burnPatientId,
+          patient_name: burnPatientName || "Patient",
+          studies: selectedStudies,
+          series: selectedSeries.length > 0 ? selectedSeries : undefined,
+          expected_instances: expectedInstances > 0 ? expectedInstances : undefined,
+          include_viewer: true,
+          include_kpacs: !opts.studyZipOnly,
+          study_zip_only: opts.studyZipOnly,
+        });
 
-      setBuildJob({
-        job_id,
-        status: "queued",
-        progress: 0,
-        message: "Job queued...",
-        filename: null,
-        download_ready: false,
-        kpacs_filename: null,
-        kpacs_download_ready: false,
-        kpacs_error: null,
-        retrieved_instances: 0,
-        expected_instances: expectedInstances > 0 ? expectedInstances : null,
-      });
+        setBuildJob({
+          job_id,
+          status: "queued",
+          progress: 0,
+          message: "Job queued...",
+          filename: null,
+          download_ready: false,
+          download_kind: opts.studyZipOnly ? "study_zip" : "ohif_iso",
+          kpacs_filename: null,
+          kpacs_download_ready: false,
+          kpacs_error: null,
+          retrieved_instances: 0,
+          expected_instances: expectedInstances > 0 ? expectedInstances : null,
+        });
 
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await getBuildStatus(job_id);
-          setBuildJob(status);
-          if (status.status === "complete" || status.status === "error") {
+        pollRef.current = setInterval(async () => {
+          try {
+            const status = await getBuildStatus(job_id);
+            setBuildJob(status);
+            if (status.status === "complete" || status.status === "error") {
+              if (pollRef.current) clearInterval(pollRef.current);
+            }
+          } catch {
             if (pollRef.current) clearInterval(pollRef.current);
           }
-        } catch {
-          if (pollRef.current) clearInterval(pollRef.current);
-        }
-      }, 2000);
-    } catch (err) {
-      console.error("Failed to start build:", err);
-      setError("Failed to create CD image. Check server connection.");
-    }
-  }, [
-    selectedNode,
-    burnPatientId,
-    burnPatientName,
-    expectedInstances,
-    selectedStudies,
-    selectedSeries,
-    setBuildJob,
-  ]);
+        }, 2000);
+      } catch (err) {
+        console.error("Failed to start build:", err);
+        setError(
+          opts.studyZipOnly
+            ? "Failed to start STUDY download. Check server connection."
+            : "Failed to create CD image. Check server connection."
+        );
+      }
+    },
+    [
+      selectedNode,
+      burnPatientId,
+      burnPatientName,
+      expectedInstances,
+      selectedStudies,
+      selectedSeries,
+      setBuildJob,
+    ]
+  );
 
   const handleDownload = useCallback(() => {
     if (!buildJob?.job_id) return;
@@ -175,9 +185,25 @@ const BurnPanel = () => {
 
           <Button
             variant="contained"
+            color="secondary"
+            startIcon={<FolderZipIcon />}
+            onClick={() => {
+              startBuild({ studyZipOnly: true }).catch(console.error);
+            }}
+            disabled={!canBuild}
+            className="cursor-pointer"
+            aria-label="Download selected studies as STUDY folder ZIP"
+          >
+            Download STUDY (ZIP)
+          </Button>
+
+          <Button
+            variant="contained"
             color="primary"
             startIcon={<LocalFireDepartmentIcon />}
-            onClick={startBuild}
+            onClick={() => {
+              startBuild({ studyZipOnly: false }).catch(console.error);
+            }}
             disabled={!canBuild}
             className="cursor-pointer"
             aria-label="Build CD image for download"
@@ -185,8 +211,11 @@ const BurnPanel = () => {
             Build ISO
           </Button>
 
-          <Typography variant="caption" className="text-gray-400">
-            The ISO will be downloaded to your PC for local burning
+          <Typography variant="caption" className="text-gray-500 max-w-xl block">
+            Download STUDY (ZIP) delivers only a <code className="text-xs">.zip</code> with paths like{" "}
+            <code className="text-xs">STUDY/&lt;study-uid&gt;/…</code>. Build ISO puts images under{" "}
+            <code className="text-xs">DICOM/</code> on the disc — there is no{" "}
+            <code className="text-xs">STUDY/</code> folder inside the OHIF ISO. K-PACS ISO is separate.
           </Typography>
         </Box>
 
@@ -208,7 +237,11 @@ const BurnPanel = () => {
         fullWidth
         aria-labelledby="build-dialog-title"
       >
-        <DialogTitle id="build-dialog-title">CD Image Builder</DialogTitle>
+        <DialogTitle id="build-dialog-title">
+          {buildJob?.download_kind === "study_zip"
+            ? "STUDY folder (ZIP)"
+            : "CD Image Builder"}
+        </DialogTitle>
         <DialogContent>
           {buildJob && (
             <Box className="space-y-4 py-2">
@@ -242,61 +275,87 @@ const BurnPanel = () => {
               {buildJob.download_ready && (
                 <>
                   <Divider />
-                  <Alert severity="success" icon={<CheckCircleIcon />}>
-                    <Typography variant="body2" className="font-medium">
-                      {buildJob.filename}
-                    </Typography>
-                    OHIF viewer ISO is ready. Download it and burn to CD/DVD on your PC.
-                  </Alert>
-                  <Button
-                    variant="contained"
-                    color="success"
-                    size="large"
-                    fullWidth
-                    startIcon={<DownloadIcon />}
-                    onClick={handleDownload}
-                    className="cursor-pointer"
-                    aria-label="Download ISO file"
-                  >
-                    Download ISO to My PC
-                  </Button>
-                  {buildJob.status === "complete" && buildJob.kpacs_error && (
-                    <Alert severity="warning" className="mt-2" role="alert">
-                      <Typography variant="body2" className="font-medium">
-                        K-PACS ISO not available
+                  {buildJob.download_kind === "study_zip" ? (
+                    <>
+                      <Alert severity="success" icon={<CheckCircleIcon />}>
+                        <Typography variant="body2" className="font-medium">
+                          {buildJob.filename}
+                        </Typography>
+                        ZIP contains a <code className="text-xs">STUDY/</code> tree with the same
+                        instances that were retrieved from the PACS (one folder per study UID).
+                      </Alert>
+                      <Button
+                        variant="contained"
+                        color="success"
+                        size="large"
+                        fullWidth
+                        startIcon={<DownloadIcon />}
+                        onClick={handleDownload}
+                        className="cursor-pointer"
+                        aria-label="Download STUDY folder ZIP file"
+                      >
+                        Download ZIP to My PC
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Alert severity="success" icon={<CheckCircleIcon />}>
+                        <Typography variant="body2" className="font-medium">
+                          {buildJob.filename}
+                        </Typography>
+                        OHIF viewer ISO is ready. Download it and burn to CD/DVD on your PC.
+                      </Alert>
+                      <Button
+                        variant="contained"
+                        color="success"
+                        size="large"
+                        fullWidth
+                        startIcon={<DownloadIcon />}
+                        onClick={handleDownload}
+                        className="cursor-pointer"
+                        aria-label="Download ISO file"
+                      >
+                        Download ISO to My PC
+                      </Button>
+                      {buildJob.status === "complete" && buildJob.kpacs_error && (
+                        <Alert severity="warning" className="mt-2" role="alert">
+                          <Typography variant="body2" className="font-medium">
+                            K-PACS ISO not available
+                          </Typography>
+                          <Typography variant="body2" className="mt-1">
+                            {buildJob.kpacs_error}
+                          </Typography>
+                        </Alert>
+                      )}
+                      {buildJob.kpacs_download_ready && (
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          size="large"
+                          fullWidth
+                          className="mt-3 cursor-pointer"
+                          startIcon={<DownloadIcon />}
+                          onClick={handleDownloadKpacs}
+                          aria-label="Download K-PACS disc ISO file"
+                        >
+                          Download K-PACS to My PC
+                        </Button>
+                      )}
+                      {buildJob.kpacs_download_ready && buildJob.kpacs_filename && (
+                        <Typography variant="caption" className="mt-1 block text-center text-gray-600">
+                          {buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer
+                          on disc)
+                        </Typography>
+                      )}
+                      <Typography
+                        variant="body2"
+                        className="mt-3 block text-center text-gray-700 font-medium"
+                      >
+                        After downloading, right-click the .iso file and select
+                        &quot;Burn disc image&quot; (Windows) or use Disk Utility (macOS)
                       </Typography>
-                      <Typography variant="body2" className="mt-1">
-                        {buildJob.kpacs_error}
-                      </Typography>
-                    </Alert>
+                    </>
                   )}
-                  {buildJob.kpacs_download_ready && (
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      size="large"
-                      fullWidth
-                      className="mt-3 cursor-pointer"
-                      startIcon={<DownloadIcon />}
-                      onClick={handleDownloadKpacs}
-                      aria-label="Download K-PACS disc ISO file"
-                    >
-                      Download K-PACS to My PC
-                    </Button>
-                  )}
-                  {buildJob.kpacs_download_ready && buildJob.kpacs_filename && (
-                    <Typography variant="caption" className="mt-1 block text-center text-gray-600">
-                      {buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer
-                      on disc)
-                    </Typography>
-                  )}
-                  <Typography
-                    variant="body2"
-                    className="mt-3 block text-center text-gray-700 font-medium"
-                  >
-                    After downloading, right-click the .iso file and select
-                    &quot;Burn disc image&quot; (Windows) or use Disk Utility (macOS)
-                  </Typography>
                 </>
               )}
             </Box>

@@ -278,15 +278,25 @@ class CdBuilderService:
         study_uids: list[str],
         series_filter: Optional[list[str]] = None,
         on_instance_retrieved: Optional[Callable[[int], None]] = None,
+        images_subdir: str = "DICOM",
     ) -> str:
+        """Retrieve instances under ``work_dir/<images_subdir>/<StudyInstanceUID>/...``.
+
+        Default ``DICOM`` keeps K-PACS and OHIF ISO layouts unchanged. Use ``STUDY`` for a
+        STUDY-folder ZIP download without modifying K-PACS code paths (they still expect
+        ``DICOM`` from the default retrieve).
+        """
+        if images_subdir not in ("DICOM", "STUDY"):
+            raise ValueError("images_subdir must be 'DICOM' or 'STUDY'")
+
         work_dir = os.path.join(self.temp_dir, str(uuid.uuid4()))
-        dicom_dir = os.path.join(work_dir, "DICOM")
-        os.makedirs(dicom_dir, exist_ok=True)
+        root_dir = os.path.join(work_dir, images_subdir)
+        os.makedirs(root_dir, exist_ok=True)
         total_files = 0
         per_study_counts: dict[str, int] = {}
 
         for study_uid in study_uids:
-            output = os.path.join(dicom_dir, study_uid)
+            output = os.path.join(root_dir, study_uid)
             prior_total = total_files
             count = await self.retriever.retrieve_study(
                 study_instance_uid=study_uid,
@@ -311,7 +321,9 @@ class CdBuilderService:
             raise RuntimeError(
                 "No DICOM instances were retrieved from PACS. "
                 f"Per-study counts: {details}. "
-                "Check selected IDs, Orthanc permissions, and study availability."
+                "If the archive is Orthanc, add \"orthanc_url\": \"http://<host>:8042\" to "
+                "that node in dicom_nodes.json for REST retrieval. "
+                "Otherwise check AE titles, ports, firewall, and C-MOVE reachability."
             )
 
         return work_dir
@@ -370,7 +382,12 @@ class CdBuilderService:
                     "  chmod +x macos_view && ./macos_view\n\n"
                 )
                 f.write("A browser window will open with the image viewer.\n")
-                f.write("Close the browser and terminal when finished.\n")
+                f.write("Close the browser and terminal when finished.\n\n")
+                f.write("Where are the images on this disc?\n")
+                f.write("  • This ISO uses the folder name DICOM/ (StudyInstanceUID subfolders).\n")
+                f.write("  • There is no STUDY/ folder on this disc by design.\n")
+                f.write("  • For a portable archive named STUDY/, use \"Download STUDY (ZIP)\" ")
+                f.write("in the web app — that download is a .zip only, not an ISO.\n")
 
         safe_name = "".join(
             c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
@@ -381,7 +398,10 @@ class CdBuilderService:
         iso_filename = f"DICOM_{safe_name}_{safe_patient_id}.iso"
         iso_path = os.path.join(self.temp_dir, iso_filename)
 
-        _create_iso(work_dir, iso_path, patient_name, rock_ridge="1.09")
+        # No Rock Ridge: same as K-PACS ISO — macOS Finder often shows RR+Joliet pycdlib
+        # images as an empty volume even though files exist (Windows sees them). Unix
+        # launchers may need chmod +x once copied (see README.txt on disc).
+        _create_iso(work_dir, iso_path, patient_name, rock_ridge=None)
 
         return iso_path
 
@@ -434,13 +454,12 @@ def _create_iso(
     source_dir: str,
     iso_path: str,
     volume_label: str,
-    rock_ridge: Optional[str] = "1.09",
+    rock_ridge: Optional[str] = None,
 ):
-    """Write ISO9660 + Joliet; optional Rock Ridge (needed for Unix execute bits on OHIF launchers).
+    """Write ISO9660 + Joliet; optional Rock Ridge (Unix execute bits — breaks Finder listing).
 
-    If rock_ridge is None, the image is Windows-friendly and usually lists correctly in macOS Finder.
-    With Rock Ridge, some macOS versions mount the volume as empty in Finder even though data is present
-    (workaround: ``mount_cd9660 -r`` or open the ISO with a tool that reads ISO9660/Joliet).
+    Default is *no* Rock Ridge so macOS Finder lists the OHIF and K-PACS discs reliably.
+    If you pass a Rock Ridge level string, some macOS versions show an empty volume in Finder.
     """
     source_dir = os.path.abspath(os.path.realpath(source_dir))
     if not os.path.isdir(source_dir):

@@ -57,6 +57,8 @@ class BurnRequest(BaseModel):
     expected_instances: Optional[int] = None
     include_viewer: bool = True
     include_kpacs: bool = True
+    # OHIF step 1: retrieve into STUDY/ and offer ZIP only (no ISO; K-PACS unchanged).
+    study_zip_only: bool = False
 
 
 class BuildProgress(BaseModel):
@@ -66,6 +68,7 @@ class BuildProgress(BaseModel):
     message: str
     filename: Optional[str] = None
     download_ready: bool = False
+    download_kind: str = "ohif_iso"  # ohif_iso | study_zip
     kpacs_filename: Optional[str] = None
     kpacs_download_ready: bool = False
     kpacs_error: Optional[str] = None

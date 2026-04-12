@@ -41,6 +41,7 @@ export interface BuildJob {
   message: string;
   filename: string | null;
   download_ready: boolean;
+  download_kind: "ohif_iso" | "study_zip";
   kpacs_filename: string | null;
   kpacs_download_ready: boolean;
   kpacs_error: string | null;

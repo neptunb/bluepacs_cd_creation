@@ -67,6 +67,7 @@ export const createCd = async (params: {
   expected_instances?: number;
   include_viewer?: boolean;
   include_kpacs?: boolean;
+  study_zip_only?: boolean;
 }): Promise<{ job_id: string }> => {
   const response = await api.post("/burn/create", params);
   return response.data;

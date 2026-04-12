@@ -1,6 +1,8 @@
 import os
 import uuid
 import logging
+import zipfile
+import shutil
 from pathlib import Path
 from threading import Lock
 
@@ -59,6 +61,43 @@ def _resolve_kpacs_template_path(path_str: str) -> str:
     return candidates[0]
 
 
+def _safe_zip_basename(patient_id: str, job_id: str) -> str:
+    raw = (patient_id or "study").strip() or "study"
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in raw)[:48] or "study"
+    return f"STUDY_{safe}_{job_id}.zip"
+
+
+def _zip_study_tree(work_dir: str, zip_path: str) -> None:
+    """Zip ``work_dir/STUDY/...`` so archive paths start with ``STUDY/`` (ZIP only — never ISO)."""
+    study_root = os.path.join(work_dir, "STUDY")
+    if not os.path.isdir(study_root):
+        raise RuntimeError("STUDY folder missing after retrieve")
+    n_files = 0
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # Explicit root helps some ZIP tools show an empty STUDY tree consistently.
+        zinfo = zipfile.ZipInfo("STUDY/")
+        zinfo.external_attr = 0o40755 << 16
+        zf.writestr(zinfo, b"")
+        for root, _dirs, files in os.walk(study_root):
+            for name in files:
+                abs_path = os.path.join(root, name)
+                if not os.path.isfile(abs_path):
+                    continue
+                arc = os.path.relpath(abs_path, work_dir).replace(os.sep, "/")
+                zf.write(abs_path, arcname=arc)
+                n_files += 1
+    if n_files == 0:
+        try:
+            os.remove(zip_path)
+        except OSError:
+            pass
+        raise RuntimeError(
+            "No files were packaged under STUDY/ — the ZIP would be empty. "
+            "Check PACS retrieval (e.g. Orthanc orthanc_url) and selected studies/series."
+        )
+    logger.info("STUDY ZIP: wrote %d file(s) to %s", n_files, zip_path)
+
+
 @burn_bp.route("/create", methods=["POST"])
 async def create_cd(request: Request):
     try:
@@ -84,6 +123,7 @@ async def create_cd(request: Request):
         "kpacs_error": None,
         "retrieved_instances": 0,
         "expected_instances": burn_req.expected_instances,
+        "download_kind": "study_zip" if burn_req.study_zip_only else "ohif_iso",
     }
     job_locks[job_id] = Lock()
 
@@ -115,6 +155,7 @@ async def get_status(request: Request, job_id: str):
         "kpacs_error": job.get("kpacs_error"),
         "retrieved_instances": job.get("retrieved_instances", 0),
         "expected_instances": job.get("expected_instances"),
+        "download_kind": job.get("download_kind", "ohif_iso"),
     })
 
 
@@ -125,17 +166,23 @@ async def download_iso(request: Request, job_id: str):
         return json_response({"error": "Job not found"}, status=404)
 
     if job["status"] != "complete" or not job["output_path"]:
-        return json_response({"error": "ISO not ready yet"}, status=409)
+        kind = job.get("download_kind", "ohif_iso")
+        hint = "ZIP" if kind == "study_zip" else "ISO"
+        return json_response({"error": f"{hint} not ready yet"}, status=409)
 
-    iso_path = job["output_path"]
-    if not os.path.exists(iso_path):
-        return json_response({"error": "ISO file not found on server"}, status=404)
+    out_path = job["output_path"]
+    if not os.path.exists(out_path):
+        return json_response({"error": "Output file not found on server"}, status=404)
 
     filename = job["filename"] or "dicom_images.iso"
+    if job.get("download_kind") == "study_zip" or filename.lower().endswith(".zip"):
+        mime = "application/zip"
+    else:
+        mime = "application/x-iso9660-image"
 
     return await file_stream(
-        iso_path,
-        mime_type="application/x-iso9660-image",
+        out_path,
+        mime_type=mime,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
@@ -236,6 +283,39 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
                     )
                 job["progress"] = retrieval_progress
 
+        if burn_req.study_zip_only:
+            job["download_kind"] = "study_zip"
+            work_dir = await builder.retrieve_studies(
+                burn_req.studies,
+                series_filter=burn_req.series,
+                on_instance_retrieved=on_instance_retrieved,
+                images_subdir="STUDY",
+            )
+            job["status"] = "building"
+            job["message"] = "Creating ZIP of STUDY folder..."
+            job["progress"] = 0.9
+            zip_name = _safe_zip_basename(burn_req.patient_id, job_id)
+            zip_path = os.path.join(config.TEMP_DIR, zip_name)
+            _zip_study_tree(work_dir, zip_path)
+            try:
+                shutil.rmtree(work_dir, ignore_errors=False)
+            except OSError as cleanup_exc:
+                logger.warning("Failed to remove temp work dir %s: %s", work_dir, cleanup_exc)
+
+            job["output_path"] = zip_path
+            job["filename"] = zip_name
+            job["kpacs_output_path"] = None
+            job["kpacs_filename"] = None
+            job["kpacs_error"] = None
+            job["status"] = "complete"
+            job["progress"] = 1.0
+            job["message"] = (
+                "STUDY folder ZIP is ready — it contains only the retrieved instances "
+                "under STUDY/<StudyInstanceUID>/..."
+            )
+            return
+
+        job["download_kind"] = "ohif_iso"
         work_dir = await builder.retrieve_studies(
             burn_req.studies,
             series_filter=burn_req.series,

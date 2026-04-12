@@ -70,7 +70,7 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
 4. Download the OHIF ISO and, when offered, the K-PACS ISO to your PC
 5. Burn the ISO to CD/DVD using your OS tools (right-click → "Burn disc image" on Windows, Disk Utility on macOS)
 
-**macOS Finder note:** The **K-PACS** ISO is built **without Rock Ridge** so Finder usually shows `DICOM/`, `K-Pacs-Lite.exe`, etc. The **OHIF** ISO keeps **Rock Ridge** (Unix execute bits for `macos_view` / `linux_view`); on some macOS versions Finder can show that volume as empty even though the image is not (use an archiver such as Keka/The Unarchiver, or mount with `hdiutil attach -nomount path.iso` and `mount_cd9660` on the correct slice).
+**macOS Finder note:** Both **OHIF** and **K-PACS** disc ISOs are built **without Rock Ridge** (ISO9660 + Joliet only) so Finder usually lists `DICOM/`, launchers, and viewer files. On macOS/Linux, if `macos_view` or `linux_view` is not executable after copy, use `chmod +x` as in the on-disc `README.txt`.
 
 ### For Patients:
 1. Insert CD into computer
