@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   FormControl,
   InputLabel,
@@ -24,6 +25,7 @@ import { fetchNodes, echoNode, fetchRecentStudies } from "@/lib/api";
 import type { SelectChangeEvent } from "@mui/material";
 
 const NodeSelector = () => {
+  const t = useTranslations("nodeSelector");
   const {
     nodes,
     selectedNode,
@@ -49,21 +51,17 @@ const NodeSelector = () => {
         if (data.length > 0) {
           setSelectedNode(data[0]);
         } else {
-          setLoadError(
-            "No DICOM nodes returned. Check backend/dicom_nodes.json and rebuild if needed."
-          );
+          setLoadError(t("errorNoNodes"));
         }
       } catch (err) {
         console.error("Failed to fetch nodes:", err);
-        setLoadError(
-          "Could not load DICOM nodes from the API. If you use Docker, rebuild the frontend image so the API proxy points at the backend container."
-        );
+        setLoadError(t("errorLoadNodes"));
       } finally {
         setLoadDone(true);
       }
     };
     loadNodes();
-  }, [setNodes, setSelectedNode]);
+  }, [setNodes, setSelectedNode, t]);
 
   const handleChange = (event: SelectChangeEvent) => {
     const node = nodes.find((n) => n.ae_title === event.target.value);
@@ -80,10 +78,10 @@ const NodeSelector = () => {
         node_ae_title: selectedNode.ae_title,
         limit: 10,
       });
-      loadLatestStudies(data, "Latest studies");
+      loadLatestStudies(data, "latest10");
     } catch (err) {
       console.error("Recent studies failed:", err);
-      setRecentError("Could not load the latest studies for this node.");
+      setRecentError(t("errorRecent"));
     } finally {
       setRecentLoading(false);
       setStudiesLoading(false);
@@ -104,10 +102,10 @@ const NodeSelector = () => {
         study_date_from: format(start, "yyyyMMdd"),
         study_date_to: format(end, "yyyyMMdd"),
       });
-      loadLatestStudies(data, "Last week studies");
+      loadLatestStudies(data, "lastWeek");
     } catch (err) {
       console.error("Last week studies failed:", err);
-      setRecentError("Could not load last week's studies for this node.");
+      setRecentError(t("errorLastWeek"));
     } finally {
       setRecentLoading(false);
       setStudiesLoading(false);
@@ -137,18 +135,18 @@ const NodeSelector = () => {
       {!loadDone && !loadError && (
         <Box className="flex items-center gap-2 text-gray-600 text-sm">
           <CircularProgress size={16} />
-          Loading DICOM nodes…
+          {t("loadingNodes")}
         </Box>
       )}
       <Box className="flex items-center gap-3 flex-wrap">
       <FormControl size="small" className="min-w-[200px]">
-        <InputLabel id="node-select-label">DICOM Node</InputLabel>
+        <InputLabel id="node-select-label">{t("dicomNode")}</InputLabel>
         <Select
           labelId="node-select-label"
           value={selectedNode?.ae_title || ""}
-          label="DICOM Node"
+          label={t("dicomNode")}
           onChange={handleChange}
-          aria-label="Select DICOM node"
+          aria-label={t("selectDicomNode")}
         >
           {nodes.map((node) => (
             <MenuItem key={node.ae_title} value={node.ae_title}>
@@ -158,12 +156,12 @@ const NodeSelector = () => {
         </Select>
       </FormControl>
 
-      <Tooltip title="Test connection (C-ECHO)">
+      <Tooltip title={t("echoTooltip")}>
         <span>
           <IconButton
             onClick={handleEcho}
             disabled={!selectedNode || echoLoading !== null}
-            aria-label="Test DICOM node connection"
+            aria-label={t("testConnection")}
             className="cursor-pointer hover:scale-110 transition-transform"
           >
             {echoLoading ? (
@@ -181,7 +179,9 @@ const NodeSelector = () => {
 
       {selectedNode && echoStatus[selectedNode.ae_title] !== undefined && (
         <Chip
-          label={echoStatus[selectedNode.ae_title] ? "Connected" : "Unreachable"}
+          label={
+            echoStatus[selectedNode.ae_title] ? t("connected") : t("unreachable")
+          }
           color={echoStatus[selectedNode.ae_title] ? "success" : "error"}
           size="small"
           variant="outlined"
@@ -201,9 +201,9 @@ const NodeSelector = () => {
         onClick={handleLatestStudies}
         disabled={!selectedNode || recentLoading}
         className="cursor-pointer"
-        aria-label="Load latest 10 studies from selected node"
+        aria-label={t("latestTenAria")}
       >
-        Latest 10 studies
+        {t("latestTen")}
       </Button>
       <Button
         variant="outlined"
@@ -218,9 +218,9 @@ const NodeSelector = () => {
         onClick={handleLastWeekStudies}
         disabled={!selectedNode || recentLoading}
         className="cursor-pointer"
-        aria-label="Load studies from the last seven days on the selected node"
+        aria-label={t("lastWeekAria")}
       >
-        LAST WEEK STUDIES
+        {t("lastWeek")}
       </Button>
       </Box>
 

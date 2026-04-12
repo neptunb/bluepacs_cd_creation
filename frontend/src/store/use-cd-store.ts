@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type { DicomNode, Patient, Study, Series, BuildJob } from "@/lib/types";
 
+export type RecentStudiesVariant = "latest10" | "lastWeek";
+
 interface CdStore {
   nodes: DicomNode[];
   selectedNode: DicomNode | null;
@@ -18,9 +20,9 @@ interface CdStore {
   selectedStudies: string[];
   studiesLoading: boolean;
   latestStudiesMode: boolean;
-  recentStudiesLabel: string;
+  recentStudiesVariant: RecentStudiesVariant | null;
   setStudies: (studies: Study[]) => void;
-  loadLatestStudies: (studies: Study[], label?: string) => void;
+  loadLatestStudies: (studies: Study[], variant: RecentStudiesVariant) => void;
   toggleStudySelection: (studyUid: string) => void;
   selectAllStudies: () => void;
   clearStudySelection: () => void;
@@ -56,7 +58,7 @@ export const useCdStore = create<CdStore>((set, get) => ({
       seriesMap: {},
       selectedSeries: [],
       latestStudiesMode: false,
-      recentStudiesLabel: "Latest studies",
+      recentStudiesVariant: null,
     }),
   setPatientSearchLoading: (loading) => set({ patientSearchLoading: loading }),
 
@@ -64,12 +66,12 @@ export const useCdStore = create<CdStore>((set, get) => ({
   selectedStudies: [],
   studiesLoading: false,
   latestStudiesMode: false,
-  recentStudiesLabel: "Latest studies",
+  recentStudiesVariant: null,
   setStudies: (studies) => set({ studies }),
-  loadLatestStudies: (studies, label) =>
+  loadLatestStudies: (studies, variant) =>
     set({
       latestStudiesMode: true,
-      recentStudiesLabel: label ?? "Latest studies",
+      recentStudiesVariant: variant,
       selectedPatient: null,
       studies,
       selectedStudies: [],
@@ -119,6 +121,6 @@ export const useCdStore = create<CdStore>((set, get) => ({
       selectedSeries: [],
       buildJob: null,
       latestStudiesMode: false,
-      recentStudiesLabel: "Latest studies",
+      recentStudiesVariant: null,
     }),
 }));

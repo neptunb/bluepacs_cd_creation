@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useCallback, useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   Paper,
   Typography,
@@ -30,11 +31,12 @@ import { formatModalitiesLabel } from "@/lib/modality-utils";
 import type { Series } from "@/lib/types";
 
 const StudyBrowser = () => {
+  const t = useTranslations("studyBrowser");
   const {
     selectedNode,
     selectedPatient,
     latestStudiesMode,
-    recentStudiesLabel,
+    recentStudiesVariant,
     studies,
     selectedStudies,
     studiesLoading,
@@ -65,7 +67,7 @@ const StudyBrowser = () => {
         setStudies(results);
       } catch (err) {
         console.error("Failed to fetch studies:", err);
-        setError("Failed to load studies.");
+        setError(t("errorLoadStudies"));
       } finally {
         setStudiesLoading(false);
       }
@@ -78,6 +80,7 @@ const StudyBrowser = () => {
     selectedNode,
     setStudies,
     setStudiesLoading,
+    t,
   ]);
 
   const handleExpandStudy = useCallback(
@@ -106,14 +109,25 @@ const StudyBrowser = () => {
 
   if (!selectedNode || (!selectedPatient && !latestStudiesMode)) return null;
 
+  const nodeLabel = selectedNode.name || selectedNode.ae_title;
+  let sectionTitle: string;
+  if (latestStudiesMode) {
+    sectionTitle =
+      recentStudiesVariant === "lastWeek"
+        ? t("titleLastWeek", { node: nodeLabel })
+        : t("titleLatestTen", { node: nodeLabel });
+  } else {
+    sectionTitle = t("titleForPatient", {
+      name: selectedPatient?.patient_name ?? "",
+    });
+  }
+
   return (
     <Paper className="p-4">
       <Box className="flex items-center justify-between mb-3">
         <Typography variant="h6" className="flex items-center gap-2">
           <FolderIcon />
-          {latestStudiesMode
-            ? `${recentStudiesLabel} — ${selectedNode.name || selectedNode.ae_title}`
-            : `Studies for ${selectedPatient?.patient_name ?? ""}`}
+          {sectionTitle}
         </Typography>
         <Box className="flex gap-2">
           <Button
@@ -122,9 +136,9 @@ const StudyBrowser = () => {
             onClick={selectAllStudies}
             disabled={studies.length === 0}
             className="cursor-pointer"
-            aria-label="Select all studies"
+            aria-label={t("selectAllAria")}
           >
-            Select All
+            {t("selectAll")}
           </Button>
           <Button
             size="small"
@@ -132,9 +146,9 @@ const StudyBrowser = () => {
             onClick={clearStudySelection}
             disabled={selectedStudies.length === 0}
             className="cursor-pointer"
-            aria-label="Deselect all studies"
+            aria-label={t("deselectAria")}
           >
-            Deselect
+            {t("deselect")}
           </Button>
         </Box>
       </Box>
@@ -147,23 +161,23 @@ const StudyBrowser = () => {
 
       {studiesLoading ? (
         <Box className="flex justify-center py-8">
-          <CircularProgress aria-label="Loading studies" />
+          <CircularProgress aria-label={t("loadingStudies")} />
         </Box>
       ) : (
         <TableContainer>
-          <Table size="small" aria-label="Study list">
+          <Table size="small" aria-label={t("tableAria")}>
             <TableHead>
               <TableRow className="bg-gray-100">
                 <TableCell padding="checkbox" />
                 <TableCell />
-                {latestStudiesMode && <TableCell>Patient ID</TableCell>}
-                {latestStudiesMode && <TableCell>Patient name</TableCell>}
-                <TableCell>Date</TableCell>
-                <TableCell>Description</TableCell>
-                <TableCell>Modality</TableCell>
-                <TableCell align="center">Series</TableCell>
-                <TableCell align="center">Images</TableCell>
-                <TableCell>Accession</TableCell>
+                {latestStudiesMode && <TableCell>{t("colPatientId")}</TableCell>}
+                {latestStudiesMode && <TableCell>{t("colPatientName")}</TableCell>}
+                <TableCell>{t("colDate")}</TableCell>
+                <TableCell>{t("colDescription")}</TableCell>
+                <TableCell>{t("colModality")}</TableCell>
+                <TableCell align="center">{t("colSeries")}</TableCell>
+                <TableCell align="center">{t("colImages")}</TableCell>
+                <TableCell>{t("colAccession")}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -177,7 +191,10 @@ const StudyBrowser = () => {
                       <Checkbox
                         checked={selectedStudies.includes(study.study_instance_uid)}
                         onChange={() => toggleStudySelection(study.study_instance_uid)}
-                        aria-label={`Select study ${study.study_description || study.study_instance_uid}`}
+                        aria-label={t("selectStudyAria", {
+                          name:
+                            study.study_description || study.study_instance_uid,
+                        })}
                       />
                     </TableCell>
                     <TableCell>
@@ -185,7 +202,7 @@ const StudyBrowser = () => {
                         size="small"
                         onClick={() => handleExpandStudy(study.study_instance_uid)}
                         aria-expanded={expandedStudy === study.study_instance_uid}
-                        aria-label="Expand series"
+                        aria-label={t("expandSeries")}
                       >
                         {expandedStudy === study.study_instance_uid ? (
                           <ExpandLessIcon />
@@ -195,14 +212,14 @@ const StudyBrowser = () => {
                       </IconButton>
                     </TableCell>
                     {latestStudiesMode && (
-                      <TableCell>{study.patient_id || "—"}</TableCell>
+                      <TableCell>{study.patient_id || t("empty")}</TableCell>
                     )}
                     {latestStudiesMode && (
-                      <TableCell>{study.patient_name || "—"}</TableCell>
+                      <TableCell>{study.patient_name || t("empty")}</TableCell>
                     )}
-                    <TableCell>{study.study_date || "—"}</TableCell>
+                    <TableCell>{study.study_date || t("empty")}</TableCell>
                     <TableCell className="font-medium">
-                      {study.study_description || "No description"}
+                      {study.study_description || t("noDescription")}
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -212,9 +229,13 @@ const StudyBrowser = () => {
                         variant="outlined"
                       />
                     </TableCell>
-                    <TableCell align="center">{study.number_of_series ?? "—"}</TableCell>
-                    <TableCell align="center">{study.number_of_instances ?? "—"}</TableCell>
-                    <TableCell>{study.accession_number || "—"}</TableCell>
+                    <TableCell align="center">
+                      {study.number_of_series ?? t("empty")}
+                    </TableCell>
+                    <TableCell align="center">
+                      {study.number_of_instances ?? t("empty")}
+                    </TableCell>
+                    <TableCell>{study.accession_number || t("empty")}</TableCell>
                   </TableRow>
 
                   <TableRow>
@@ -244,9 +265,7 @@ const StudyBrowser = () => {
 
       {!studiesLoading && studies.length === 0 && (
         <Typography variant="body2" className="text-gray-500 text-center py-4">
-          {latestStudiesMode
-            ? "No studies returned. The archive may be empty or the query timed out."
-            : "No studies found for this patient."}
+          {latestStudiesMode ? t("noStudiesLatest") : t("noStudiesPatient")}
         </Typography>
       )}
     </Paper>
@@ -262,10 +281,11 @@ const SeriesDetail = ({
   series: Series[];
   loading: boolean;
 }) => {
+  const t = useTranslations("studyBrowser");
   if (loading) {
     return (
       <Box className="flex justify-center py-4">
-        <CircularProgress size={24} aria-label="Loading series" />
+        <CircularProgress size={24} aria-label={t("loadingSeries")} />
       </Box>
     );
   }
@@ -273,28 +293,30 @@ const SeriesDetail = ({
   return (
     <Box className="pl-12 pr-4 py-2 bg-gray-50">
       <Typography variant="subtitle2" className="mb-2 text-gray-600">
-        Series in study
+        {t("seriesInStudy")}
       </Typography>
-      <Table size="small" aria-label={`Series for study ${studyUid}`}>
+      <Table size="small" aria-label={`${t("seriesTableAria")} ${studyUid}`}>
         <TableHead>
           <TableRow>
-            <TableCell>#</TableCell>
-            <TableCell>Description</TableCell>
-            <TableCell>Modality</TableCell>
-            <TableCell align="center">Images</TableCell>
-            <TableCell>Body Part</TableCell>
+            <TableCell>{t("colSeriesNumber")}</TableCell>
+            <TableCell>{t("colSeriesDescription")}</TableCell>
+            <TableCell>{t("colModalityShort")}</TableCell>
+            <TableCell align="center">{t("colImages")}</TableCell>
+            <TableCell>{t("colBodyPart")}</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           {series.map((s) => (
             <TableRow key={s.series_instance_uid} hover>
-              <TableCell>{s.series_number ?? "—"}</TableCell>
-              <TableCell>{s.series_description || "No description"}</TableCell>
+              <TableCell>{s.series_number ?? t("empty")}</TableCell>
+              <TableCell>{s.series_description || t("noDescription")}</TableCell>
               <TableCell>
                 <Chip label={s.modality} size="small" variant="outlined" />
               </TableCell>
-              <TableCell align="center">{s.number_of_instances ?? "—"}</TableCell>
-              <TableCell>{s.body_part_examined || "—"}</TableCell>
+              <TableCell align="center">
+                {s.number_of_instances ?? t("empty")}
+              </TableCell>
+              <TableCell>{s.body_part_examined || t("empty")}</TableCell>
             </TableRow>
           ))}
         </TableBody>

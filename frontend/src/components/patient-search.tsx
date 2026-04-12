@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import type { KeyboardEvent, SyntheticEvent } from "react";
+import { useTranslations } from "next-intl";
 import {
   TextField,
   Button,
@@ -30,6 +31,7 @@ type SearchMode = "name_id" | "study_date";
 const toDicomStudyDate = (htmlDate: string): string => htmlDate.replace(/-/g, "");
 
 const PatientSearch = () => {
+  const t = useTranslations("patientSearch");
   const {
     selectedNode,
     patients,
@@ -63,7 +65,7 @@ const PatientSearch = () => {
       const a = toDicomStudyDate(studyDateFrom);
       const b = toDicomStudyDate(studyDateTo);
       if (a > b) {
-        setError("Start date must be on or before end date.");
+        setError(t("errorDateOrder"));
         return;
       }
     }
@@ -87,7 +89,7 @@ const PatientSearch = () => {
       setPatients(results);
     } catch (err) {
       console.error("Patient search failed:", err);
-      setError("Failed to search patients. Check DICOM node connection.");
+      setError(t("errorSearchFailed"));
     } finally {
       setPatientSearchLoading(false);
     }
@@ -100,6 +102,7 @@ const PatientSearch = () => {
     studyDateTo,
     setPatients,
     setPatientSearchLoading,
+    t,
   ]);
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -109,7 +112,7 @@ const PatientSearch = () => {
   return (
     <Paper className="p-4">
       <Typography variant="h6" className="mb-3 flex items-center gap-2">
-        <PersonIcon /> Patient Search
+        <PersonIcon /> {t("title")}
       </Typography>
 
       <ToggleButtonGroup
@@ -120,14 +123,14 @@ const PatientSearch = () => {
         }}
         size="small"
         className="mb-4"
-        aria-label="Patient search mode"
+        aria-label={t("modeAria")}
       >
-        <ToggleButton value="name_id" className="cursor-pointer normal-case" aria-label="Search by name or ID">
-          Name / ID
+        <ToggleButton value="name_id" className="cursor-pointer normal-case" aria-label={t("nameIdMode")}>
+          {t("nameId")}
         </ToggleButton>
-        <ToggleButton value="study_date" className="cursor-pointer normal-case" aria-label="Search by study date range">
+        <ToggleButton value="study_date" className="cursor-pointer normal-case" aria-label={t("studyDatesMode")}>
           <DateRangeIcon fontSize="small" className="mr-1" aria-hidden />
-          Study dates
+          {t("studyDates")}
         </ToggleButton>
       </ToggleButtonGroup>
 
@@ -135,30 +138,30 @@ const PatientSearch = () => {
         {searchMode === "name_id" ? (
           <>
             <TextField
-              label="Patient Name"
+              label={t("patientName")}
               size="small"
               value={nameQuery}
               onChange={(e) => setNameQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="e.g. Smith or John (partial name)"
+              placeholder={t("patientNamePlaceholder")}
               className="flex-1 min-w-[200px]"
-              aria-label="Search by patient name"
+              aria-label={t("patientNameAria")}
             />
             <TextField
-              label="Patient ID"
+              label={t("patientId")}
               size="small"
               value={idQuery}
               onChange={(e) => setIdQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="e.g. 12345"
+              placeholder={t("patientIdPlaceholder")}
               className="flex-1 min-w-[150px]"
-              aria-label="Search by patient ID"
+              aria-label={t("patientIdAria")}
             />
           </>
         ) : (
           <>
             <TextField
-              label="Study date from"
+              label={t("studyDateFrom")}
               type="date"
               size="small"
               value={studyDateFrom}
@@ -166,10 +169,10 @@ const PatientSearch = () => {
               onKeyDown={handleKeyDown}
               InputLabelProps={{ shrink: true }}
               className="min-w-[180px]"
-              aria-label="Study date range start"
+              aria-label={t("studyDateFromAria")}
             />
             <TextField
-              label="Study date to"
+              label={t("studyDateTo")}
               type="date"
               size="small"
               value={studyDateTo}
@@ -177,7 +180,7 @@ const PatientSearch = () => {
               onKeyDown={handleKeyDown}
               InputLabelProps={{ shrink: true }}
               className="min-w-[180px]"
-              aria-label="Study date range end"
+              aria-label={t("studyDateToAria")}
             />
           </>
         )}
@@ -191,9 +194,9 @@ const PatientSearch = () => {
             (searchMode === "name_id" ? !nameQuery && !idQuery : !studyDateFrom || !studyDateTo)
           }
           className="cursor-pointer"
-          aria-label="Search patients"
+          aria-label={t("searchAria")}
         >
-          Search
+          {t("search")}
         </Button>
       </Box>
 
@@ -205,13 +208,13 @@ const PatientSearch = () => {
 
       {patients.length > 0 && (
         <TableContainer>
-          <Table size="small" aria-label="Patient search results">
+          <Table size="small" aria-label={t("tableAria")}>
             <TableHead>
               <TableRow className="bg-gray-100">
-                <TableCell>Patient ID</TableCell>
-                <TableCell>Patient Name</TableCell>
-                <TableCell>Birth Date</TableCell>
-                <TableCell>Sex</TableCell>
+                <TableCell>{t("colPatientId")}</TableCell>
+                <TableCell>{t("colPatientName")}</TableCell>
+                <TableCell>{t("colBirthDate")}</TableCell>
+                <TableCell>{t("colSex")}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -231,8 +234,8 @@ const PatientSearch = () => {
                 >
                   <TableCell>{patient.patient_id}</TableCell>
                   <TableCell className="font-medium">{patient.patient_name}</TableCell>
-                  <TableCell>{patient.birth_date || "—"}</TableCell>
-                  <TableCell>{patient.sex || "—"}</TableCell>
+                  <TableCell>{patient.birth_date || t("empty")}</TableCell>
+                  <TableCell>{patient.sex || t("empty")}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -244,7 +247,7 @@ const PatientSearch = () => {
         patients.length === 0 &&
         (searchMode === "name_id" ? nameQuery || idQuery : studyDateFrom && studyDateTo) && (
           <Typography variant="body2" className="text-gray-500 text-center py-4">
-            No patients found. Try a different search.
+            {t("noResults")}
           </Typography>
         )}
     </Paper>

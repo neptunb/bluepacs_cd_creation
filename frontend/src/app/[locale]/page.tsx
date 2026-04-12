@@ -1,6 +1,6 @@
 "use client";
 
-import { Box, Container } from "@mui/material";
+import { Container } from "@mui/material";
 import Header from "@/components/header";
 import NodeSelector from "@/components/node-selector";
 import PatientSearch from "@/components/patient-search";

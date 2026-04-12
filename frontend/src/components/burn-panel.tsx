@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useTranslations } from "next-intl";
 import {
   Paper,
   Typography,
@@ -53,7 +54,22 @@ const selectionIncludesNM = (
   return false;
 };
 
+const BUILD_STATUSES = [
+  "queued",
+  "retrieving",
+  "building",
+  "complete",
+  "error",
+] as const;
+
+type BuildStatusKey = (typeof BUILD_STATUSES)[number];
+
+const isBuildStatusKey = (s: string): s is BuildStatusKey =>
+  (BUILD_STATUSES as readonly string[]).includes(s);
+
 const BurnPanel = () => {
+  const t = useTranslations("burnPanel");
+  const tStatus = useTranslations("burnPanel.status");
   const {
     selectedNode,
     selectedPatient,
@@ -102,7 +118,7 @@ const BurnPanel = () => {
         const { job_id } = await createCd({
           node_ae_title: selectedNode.ae_title,
           patient_id: burnPatientId,
-          patient_name: burnPatientName || "Patient",
+          patient_name: burnPatientName || t("patientFallback"),
           studies: selectedStudies,
           series: selectedSeries.length > 0 ? selectedSeries : undefined,
           expected_instances: expectedInstances > 0 ? expectedInstances : undefined,
@@ -115,7 +131,7 @@ const BurnPanel = () => {
           job_id,
           status: "queued",
           progress: 0,
-          message: "Job queued...",
+          message: t("jobQueued"),
           filename: null,
           download_ready: false,
           download_kind: opts.studyZipOnly ? "study_zip" : "ohif_iso",
@@ -140,9 +156,7 @@ const BurnPanel = () => {
       } catch (err) {
         console.error("Failed to start build:", err);
         setError(
-          opts.studyZipOnly
-            ? "Failed to start STUDY download. Check server connection."
-            : "Failed to create CD image. Check server connection."
+          opts.studyZipOnly ? t("errorStartZip") : t("errorStartIso")
         );
       }
     },
@@ -154,6 +168,7 @@ const BurnPanel = () => {
       selectedStudies,
       selectedSeries,
       setBuildJob,
+      t,
     ]
   );
 
@@ -204,12 +219,12 @@ const BurnPanel = () => {
     <>
       <Paper className="p-4">
         <Typography variant="h6" className="mb-3 flex items-center gap-2">
-          <AlbumIcon /> Create CD Image
+          <AlbumIcon /> {t("title")}
         </Typography>
 
         <Box className="flex items-center gap-3 flex-wrap">
           <Typography variant="body2" className="text-gray-600">
-            {selectedStudies.length} {selectedStudies.length === 1 ? "study" : "studies"} selected
+            {t("studiesSelected", { count: selectedStudies.length })}
           </Typography>
 
           <Button
@@ -221,9 +236,9 @@ const BurnPanel = () => {
             }}
             disabled={!canBuild}
             className="cursor-pointer"
-            aria-label="Download selected studies as STUDY folder ZIP"
+            aria-label={t("downloadStudyZipAria")}
           >
-            Download STUDY (ZIP)
+            {t("downloadStudyZip")}
           </Button>
 
           <Button
@@ -235,16 +250,13 @@ const BurnPanel = () => {
             }}
             disabled={!canBuild}
             className="cursor-pointer"
-            aria-label="Build CD image for download"
+            aria-label={t("buildIsoAria")}
           >
-            Build ISO
+            {t("buildIso")}
           </Button>
 
           <Typography variant="caption" className="text-gray-500 max-w-xl block">
-            Download STUDY (ZIP) delivers only a <code className="text-xs">.zip</code> with paths like{" "}
-            <code className="text-xs">STUDY/&lt;study-uid&gt;/…</code>. Build ISO puts images under{" "}
-            <code className="text-xs">DICOM/</code> on the disc — there is no{" "}
-            <code className="text-xs">STUDY/</code> folder inside the OHIF ISO. K-PACS ISO is separate.
+            {t("hintZip")}
           </Typography>
         </Box>
 
@@ -268,16 +280,20 @@ const BurnPanel = () => {
       >
         <DialogTitle id="build-dialog-title">
           {buildJob?.download_kind === "study_zip"
-            ? "STUDY folder (ZIP)"
-            : "CD Image Builder"}
+            ? t("dialogTitleZip")
+            : t("dialogTitleIso")}
         </DialogTitle>
         <DialogContent>
           {buildJob && (
             <Box className="space-y-4 py-2">
               <Box className="flex items-center gap-2">
-                <Typography variant="body2">Status:</Typography>
+                <Typography variant="body2">{t("statusLabel")}</Typography>
                 <Chip
-                  label={buildJob.status}
+                  label={
+                    isBuildStatusKey(buildJob.status)
+                      ? tStatus(buildJob.status)
+                      : buildJob.status
+                  }
                   color={statusColor(buildJob.status)}
                   size="small"
                   icon={getStatusIcon(buildJob.status)}
@@ -288,7 +304,7 @@ const BurnPanel = () => {
                 variant="determinate"
                 value={buildJob.progress * 100}
                 className="rounded"
-                aria-label="Build progress"
+                aria-label={t("progressAria")}
                 aria-valuenow={buildJob.progress * 100}
                 aria-valuemin={0}
                 aria-valuemax={100}
@@ -298,7 +314,9 @@ const BurnPanel = () => {
                 {buildJob.message}
               </Typography>
               <Typography variant="body2" className="text-gray-700 font-medium">
-                Retrieved instances: {buildJob.retrieved_instances}
+                {t("retrievedInstances", {
+                  count: buildJob.retrieved_instances,
+                })}
               </Typography>
 
               {buildJob.download_ready && (
@@ -310,8 +328,9 @@ const BurnPanel = () => {
                         <Typography variant="body2" className="font-medium">
                           {buildJob.filename}
                         </Typography>
-                        ZIP contains a <code className="text-xs">STUDY/</code> tree with the same
-                        instances that were retrieved from the PACS (one folder per study UID).
+                        <Typography variant="body2" className="mt-1">
+                          {t("zipReadyBody")}
+                        </Typography>
                       </Alert>
                       <Button
                         variant="contained"
@@ -321,9 +340,9 @@ const BurnPanel = () => {
                         startIcon={<DownloadIcon />}
                         onClick={handleDownload}
                         className="cursor-pointer"
-                        aria-label="Download STUDY folder ZIP file"
+                        aria-label={t("downloadZipAria")}
                       >
-                        Download ZIP to My PC
+                        {t("downloadZip")}
                       </Button>
                     </>
                   ) : (
@@ -331,12 +350,10 @@ const BurnPanel = () => {
                       {hideOhifIsoDownload ? (
                         <Alert severity="info" role="status">
                           <Typography variant="body2" className="font-medium">
-                            Nuclear Medicine (NM) in this selection
+                            {t("nmTitle")}
                           </Typography>
                           <Typography variant="body2" className="mt-1">
-                            The on-disc OHIF viewer is not offered for NM. Use{" "}
-                            <strong>Download K-PACS to My PC</strong> or{" "}
-                            <strong>Download STUDY (ZIP)</strong> for other viewers (e.g. Horos).
+                            {t("nmBody")}
                           </Typography>
                         </Alert>
                       ) : (
@@ -372,9 +389,7 @@ const BurnPanel = () => {
                                 aria-hidden
                               />
                               <Typography variant="body2" color="text.secondary">
-                                {buildJob.filename} — OHIF web viewer with{" "}
-                                <code className="text-xs">DICOM/</code> on disc
-                                (browser-based viewer on disc)
+                                {t("ohifReady", { filename: buildJob.filename ?? "" })}
                               </Typography>
                             </Box>
                             <Button
@@ -385,9 +400,9 @@ const BurnPanel = () => {
                               startIcon={<DownloadIcon />}
                               onClick={handleDownload}
                               className="cursor-pointer"
-                              aria-label="Download ISO file"
+                              aria-label={t("downloadIsoAria")}
                             >
-                              Download ISO to My PC
+                              {t("downloadIso")}
                             </Button>
                           </Paper>
                           {buildJob.kpacs_download_ready === true && (
@@ -415,8 +430,10 @@ const BurnPanel = () => {
                                 />
                                 <Typography variant="body2" color="text.secondary">
                                   {buildJob.kpacs_filename
-                                    ? `${buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer on disc)`
-                                    : "K-PACS Lite disc image with DICOMDIR (Windows viewer on disc)"}
+                                    ? t("kpacsReadyNamed", {
+                                        filename: buildJob.kpacs_filename,
+                                      })
+                                    : t("kpacsReadyDefault")}
                                 </Typography>
                               </Box>
                               <Button
@@ -427,9 +444,9 @@ const BurnPanel = () => {
                                 startIcon={<DownloadIcon />}
                                 onClick={handleDownloadKpacs}
                                 className="cursor-pointer"
-                                aria-label="Download K-PACS disc ISO file"
+                                aria-label={t("downloadKpacsAria")}
                               >
-                                Download K-PACS to My PC
+                                {t("downloadKpacs")}
                               </Button>
                             </Paper>
                           )}
@@ -438,7 +455,7 @@ const BurnPanel = () => {
                       {buildJob.status === "complete" && buildJob.kpacs_error && (
                         <Alert severity="warning" className="mt-2" role="alert">
                           <Typography variant="body2" className="font-medium">
-                            K-PACS ISO not available
+                            {t("kpacsUnavailableTitle")}
                           </Typography>
                           <Typography variant="body2" className="mt-1">
                             {buildJob.kpacs_error}
@@ -472,8 +489,10 @@ const BurnPanel = () => {
                             />
                             <Typography variant="body2" color="text.secondary">
                               {buildJob.kpacs_filename
-                                ? `${buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer on disc)`
-                                : "K-PACS Lite disc image with DICOMDIR (Windows viewer on disc)"}
+                                ? t("kpacsReadyNamed", {
+                                    filename: buildJob.kpacs_filename,
+                                  })
+                                : t("kpacsReadyDefault")}
                             </Typography>
                           </Box>
                           <Button
@@ -484,9 +503,9 @@ const BurnPanel = () => {
                             className="cursor-pointer"
                             startIcon={<DownloadIcon />}
                             onClick={handleDownloadKpacs}
-                            aria-label="Download K-PACS disc ISO file"
+                            aria-label={t("downloadKpacsAria")}
                           >
-                            Download K-PACS to My PC
+                            {t("downloadKpacs")}
                           </Button>
                         </Paper>
                       )}
@@ -494,8 +513,7 @@ const BurnPanel = () => {
                         variant="body2"
                         className="mt-3 block text-center text-gray-700 font-medium"
                       >
-                        After downloading, right-click the .iso file and select
-                        &quot;Burn disc image&quot; (Windows) or use Disk Utility (macOS)
+                        {t("burnHint")}
                       </Typography>
                     </>
                   )}
@@ -513,7 +531,7 @@ const BurnPanel = () => {
               buildJob.status !== "error"
             }
           >
-            Close
+            {t("close")}
           </Button>
         </DialogActions>
       </Dialog>
