@@ -11,7 +11,7 @@ from pynetdicom.sop_class import (
 )
 from pydicom.dataset import Dataset
 
-from services.search_normalize import plain_query_value
+from services.search_normalize import patient_name_for_find, plain_query_value
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class DicomQueryService:
                 return []
 
             try:
-                name_q = plain_query_value(patient_name)
+                name_q = patient_name_for_find(patient_name)
                 id_q = plain_query_value(patient_id)
 
                 ds = Dataset()
@@ -354,7 +354,7 @@ class DicomQueryService:
             info["association"] = "established"
 
             try:
-                name_q = plain_query_value(patient_name)
+                name_q = patient_name_for_find(patient_name)
                 id_q = plain_query_value(patient_id)
 
                 ds = Dataset()

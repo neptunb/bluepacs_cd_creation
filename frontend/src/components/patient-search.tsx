@@ -75,7 +75,7 @@ const PatientSearch = () => {
           value={nameQuery}
           onChange={(e) => setNameQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="e.g. Smith*"
+          placeholder="e.g. Smith or John (partial name)"
           className="flex-1 min-w-[200px]"
           aria-label="Search by patient name"
         />

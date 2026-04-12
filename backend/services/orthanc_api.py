@@ -7,7 +7,7 @@ from typing import Any, Optional
 import aiohttp
 
 from config import config
-from services.search_normalize import plain_query_value
+from services.search_normalize import patient_name_for_find, plain_query_value
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class OrthancApiService:
         patient_id: str = "",
     ) -> list[dict]:
         query = {}
-        name_plain = plain_query_value(patient_name)
+        name_plain = patient_name_for_find(patient_name)
         id_plain = plain_query_value(patient_id)
         if name_plain:
             query["PatientName"] = name_plain
