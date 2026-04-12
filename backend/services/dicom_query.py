@@ -11,7 +11,11 @@ from pynetdicom.sop_class import (
 )
 from pydicom.dataset import Dataset
 
-from services.search_normalize import patient_name_for_find, plain_query_value
+from services.search_normalize import (
+    normalize_modalities_in_study,
+    patient_name_for_find,
+    plain_query_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +221,9 @@ class DicomQueryService:
                         "study_time": _extract_str(ident, "StudyTime"),
                         "study_description": _extract_str(ident, "StudyDescription"),
                         "accession_number": _extract_str(ident, "AccessionNumber"),
-                        "modalities_in_study": _extract_str(ident, "ModalitiesInStudy"),
+                        "modalities_in_study": normalize_modalities_in_study(
+                            getattr(ident, "ModalitiesInStudy", None)
+                        ),
                         "number_of_series": int(getattr(ident, "NumberOfStudyRelatedSeries", 0) or 0),
                         "number_of_instances": int(getattr(ident, "NumberOfStudyRelatedInstances", 0) or 0),
                         "patient_id": _extract_str(ident, "PatientID"),
@@ -278,7 +284,9 @@ class DicomQueryService:
                         "study_time": _extract_str(ident, "StudyTime"),
                         "study_description": _extract_str(ident, "StudyDescription"),
                         "accession_number": _extract_str(ident, "AccessionNumber"),
-                        "modalities_in_study": _extract_str(ident, "ModalitiesInStudy"),
+                        "modalities_in_study": normalize_modalities_in_study(
+                            getattr(ident, "ModalitiesInStudy", None)
+                        ),
                         "number_of_series": int(getattr(ident, "NumberOfStudyRelatedSeries", 0) or 0),
                         "number_of_instances": int(getattr(ident, "NumberOfStudyRelatedInstances", 0) or 0),
                         "patient_id": _extract_str(ident, "PatientID"),

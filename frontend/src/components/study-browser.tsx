@@ -26,6 +26,7 @@ import SelectAllIcon from "@mui/icons-material/SelectAll";
 import DeselectIcon from "@mui/icons-material/Deselect";
 import { useCdStore } from "@/store/use-cd-store";
 import { fetchStudies, fetchSeries } from "@/lib/api";
+import { formatModalitiesLabel } from "@/lib/modality-utils";
 import type { Series } from "@/lib/types";
 
 const StudyBrowser = () => {
@@ -204,7 +205,7 @@ const StudyBrowser = () => {
                     </TableCell>
                     <TableCell>
                       <Chip
-                        label={study.modalities_in_study || "—"}
+                        label={formatModalitiesLabel(study.modalities_in_study)}
                         size="small"
                         color="primary"
                         variant="outlined"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Paper,
   Typography,
@@ -29,6 +29,29 @@ import {
   getKpacsDownloadUrl,
   cleanupJob,
 } from "@/lib/api";
+import { modalitiesTokens } from "@/lib/modality-utils";
+
+const selectionIncludesNM = (
+  studies: { study_instance_uid: string; modalities_in_study: string | null }[],
+  selectedStudies: string[],
+  seriesMap: Record<string, { series_instance_uid: string; modality: string }[]>,
+  selectedSeries: string[]
+): boolean => {
+  if (selectedSeries.length > 0) {
+    for (const studyUid of selectedStudies) {
+      for (const ser of seriesMap[studyUid] ?? []) {
+        if (!selectedSeries.includes(ser.series_instance_uid)) continue;
+        if ((ser.modality ?? "").toUpperCase().trim() === "NM") return true;
+      }
+    }
+    return false;
+  }
+  for (const uid of selectedStudies) {
+    const study = studies.find((s) => s.study_instance_uid === uid);
+    if (study && modalitiesTokens(study.modalities_in_study).includes("NM")) return true;
+  }
+  return false;
+};
 
 const BurnPanel = () => {
   const {
@@ -37,6 +60,7 @@ const BurnPanel = () => {
     studies,
     selectedStudies,
     selectedSeries,
+    seriesMap,
     buildJob,
     setBuildJob,
   } = useCdStore();
@@ -56,6 +80,11 @@ const BurnPanel = () => {
     const study = studies.find((s) => s.study_instance_uid === studyUid);
     return sum + (study?.number_of_instances ?? 0);
   }, 0);
+
+  const hideOhifIsoDownload = useMemo(
+    () => selectionIncludesNM(studies, selectedStudies, seriesMap, selectedSeries),
+    [studies, selectedStudies, seriesMap, selectedSeries]
+  );
 
   const canBuild =
     Boolean(selectedNode) &&
@@ -299,24 +328,39 @@ const BurnPanel = () => {
                     </>
                   ) : (
                     <>
-                      <Alert severity="success" icon={<CheckCircleIcon />}>
-                        <Typography variant="body2" className="font-medium">
-                          {buildJob.filename}
-                        </Typography>
-                        OHIF viewer ISO is ready. Download it and burn to CD/DVD on your PC.
-                      </Alert>
-                      <Button
-                        variant="contained"
-                        color="success"
-                        size="large"
-                        fullWidth
-                        startIcon={<DownloadIcon />}
-                        onClick={handleDownload}
-                        className="cursor-pointer"
-                        aria-label="Download ISO file"
-                      >
-                        Download ISO to My PC
-                      </Button>
+                      {hideOhifIsoDownload ? (
+                        <Alert severity="info" role="status">
+                          <Typography variant="body2" className="font-medium">
+                            Nuclear Medicine (NM) in this selection
+                          </Typography>
+                          <Typography variant="body2" className="mt-1">
+                            The on-disc OHIF viewer is not offered for NM. Use{" "}
+                            <strong>Download K-PACS to My PC</strong> or{" "}
+                            <strong>Download STUDY (ZIP)</strong> for other viewers (e.g. Horos).
+                          </Typography>
+                        </Alert>
+                      ) : (
+                        <>
+                          <Alert severity="success" icon={<CheckCircleIcon />}>
+                            <Typography variant="body2" className="font-medium">
+                              {buildJob.filename}
+                            </Typography>
+                            OHIF viewer ISO is ready. Download it and burn to CD/DVD on your PC.
+                          </Alert>
+                          <Button
+                            variant="contained"
+                            color="success"
+                            size="large"
+                            fullWidth
+                            startIcon={<DownloadIcon />}
+                            onClick={handleDownload}
+                            className="cursor-pointer"
+                            aria-label="Download ISO file"
+                          >
+                            Download ISO to My PC
+                          </Button>
+                        </>
+                      )}
                       {buildJob.status === "complete" && buildJob.kpacs_error && (
                         <Alert severity="warning" className="mt-2" role="alert">
                           <Typography variant="body2" className="font-medium">

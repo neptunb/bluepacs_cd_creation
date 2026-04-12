@@ -8,6 +8,38 @@ def plain_query_value(value: str | None) -> str:
     return value.strip().replace("*", "").strip()
 
 
+def normalize_modalities_in_study(value) -> str:
+    """
+    Return a single string for API/JSON (DICOM-style backslash-separated CS values).
+
+    pydicom C-FIND identifiers often expose ModalitiesInStudy as MultiValue; str()
+    becomes a Python list repr like "['CT', 'MR']", which breaks clients. Orthanc
+    may return a JSON list or a plain string.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (list, tuple)):
+        parts = [str(x).strip() for x in value if str(x).strip()]
+        return "\\".join(parts)
+    if isinstance(value, bytes):
+        s = value.decode(errors="replace").strip()
+    elif isinstance(value, str):
+        s = value.strip()
+    else:
+        s = str(value).strip()
+    if not s:
+        return ""
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        parts: list[str] = []
+        for part in inner.split(","):
+            p = part.strip().strip("'\"")
+            if p:
+                parts.append(p)
+        return "\\".join(parts) if parts else s
+    return s
+
+
 def patient_name_for_find(value: str | None) -> str:
     """
     Build a PatientName value for C-FIND / Orthanc /tools/find.

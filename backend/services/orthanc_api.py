@@ -7,7 +7,11 @@ from typing import Any, Optional
 import aiohttp
 
 from config import config
-from services.search_normalize import patient_name_for_find, plain_query_value
+from services.search_normalize import (
+    normalize_modalities_in_study,
+    patient_name_for_find,
+    plain_query_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +208,9 @@ class OrthancApiService:
                 "study_time": main.get("StudyTime", ""),
                 "study_description": main.get("StudyDescription", ""),
                 "accession_number": main.get("AccessionNumber", ""),
-                "modalities_in_study": main.get("ModalitiesInStudy", ""),
+                "modalities_in_study": normalize_modalities_in_study(
+                    main.get("ModalitiesInStudy", "")
+                ),
                 "number_of_series": len(item.get("Series", [])),
                 "number_of_instances": 0,
                 "patient_id": patient_main.get("PatientID", ""),
@@ -231,7 +237,9 @@ class OrthancApiService:
             "study_time": main.get("StudyTime", ""),
             "study_description": main.get("StudyDescription", ""),
             "accession_number": main.get("AccessionNumber", ""),
-            "modalities_in_study": main.get("ModalitiesInStudy", ""),
+            "modalities_in_study": normalize_modalities_in_study(
+                main.get("ModalitiesInStudy", "")
+            ),
             "number_of_series": len(item.get("Series", []) or []),
             "number_of_instances": n_inst,
             "patient_id": patient_main.get("PatientID", ""),
@@ -250,7 +258,9 @@ class OrthancApiService:
             "study_time": main.get("StudyTime", ""),
             "study_description": main.get("StudyDescription", ""),
             "accession_number": main.get("AccessionNumber", ""),
-            "modalities_in_study": main.get("ModalitiesInStudy", ""),
+            "modalities_in_study": normalize_modalities_in_study(
+                main.get("ModalitiesInStudy", "")
+            ),
             "number_of_series": n_series,
             "number_of_instances": 0,
             "patient_id": patient_main.get("PatientID", ""),

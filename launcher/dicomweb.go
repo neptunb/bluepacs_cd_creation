@@ -45,6 +45,11 @@ type DicomFile struct {
 	PixelSpacing              []string
 	WindowCenter              []string
 	WindowWidth               []string
+	SliceThickness            string
+	SpacingBetweenSlices      string
+	RescaleIntercept          string
+	RescaleSlope              string
+	ImageType                 []string
 }
 
 func setDicomWebJSONHeaders(w http.ResponseWriter) {
@@ -201,16 +206,48 @@ func (h *DicomWebHandler) parseDicomFile(path string) *DicomFile {
 	df.BitsStored = firstIntIn(dataset, tag.BitsStored)
 	df.HighBit = firstIntIn(dataset, tag.HighBit)
 	df.PixelRepresentation = firstIntIn(dataset, tag.PixelRepresentation)
-	df.PhotometricInterpretation = getStringTag(tag.PhotometricInterpretation)
+	pi := getStringTag(tag.PhotometricInterpretation)
 	df.NumberOfFrames = getStringTag(tag.NumberOfFrames)
 	df.ImageOrientationPatient = stringSliceFrom(dataset, tag.ImageOrientationPatient)
 	df.ImagePositionPatient = stringSliceFrom(dataset, tag.ImagePositionPatient)
 	df.PixelSpacing = stringSliceFrom(dataset, tag.PixelSpacing)
+	if len(df.PixelSpacing) == 0 {
+		if ips := stringSliceFrom(dataset, tag.ImagerPixelSpacing); len(ips) > 0 {
+			df.PixelSpacing = ips
+		} else if nps := stringSliceFrom(dataset, tag.NominalScannedPixelSpacing); len(nps) > 0 {
+			df.PixelSpacing = nps
+		}
+	}
 	df.WindowCenter = stringSliceFrom(dataset, tag.WindowCenter)
 	df.WindowWidth = stringSliceFrom(dataset, tag.WindowWidth)
+	df.SliceThickness = getStringTag(tag.SliceThickness)
+	df.SpacingBetweenSlices = getStringTag(tag.SpacingBetweenSlices)
+	df.RescaleIntercept = getStringTag(tag.RescaleIntercept)
+	df.RescaleSlope = getStringTag(tag.RescaleSlope)
+	df.ImageType = stringSliceFrom(dataset, tag.ImageType)
+	// Cornerstone VTK stack reuse checks columns/rows but not components; wrong PI vs pixel layout → scalarData.set() throws.
+	if df.SamplesPerPixel == 0 && pi != "" {
+		switch {
+		case pi == "RGB" || strings.HasPrefix(pi, "YBR"):
+			df.SamplesPerPixel = 3
+		case pi == "PALETTE COLOR":
+			df.SamplesPerPixel = 1
+		default:
+			df.SamplesPerPixel = 1
+		}
+	}
 	if df.Rows > 0 && df.Columns > 0 && df.SamplesPerPixel == 0 {
 		df.SamplesPerPixel = 1
 	}
+	if pi == "" {
+		switch df.SamplesPerPixel {
+		case 3:
+			pi = "RGB"
+		default:
+			pi = "MONOCHROME2"
+		}
+	}
+	df.PhotometricInterpretation = pi
 
 	if df.StudyInstanceUID == "" || df.SeriesInstanceUID == "" || df.SOPInstanceUID == "" {
 		return nil
@@ -222,23 +259,66 @@ func (h *DicomWebHandler) parseDicomFile(path string) *DicomFile {
 func (h *DicomWebHandler) HandleStudies(w http.ResponseWriter, r *http.Request) {
 	h.loadFiles()
 
-	studyMap := make(map[string]map[string]interface{})
+	type studyAgg struct {
+		studyUID         string
+		studyDate        string
+		studyDescription string
+		patientName      string
+		patientID        string
+		modalities       map[string]struct{}
+		seriesUIDs       map[string]struct{}
+		instanceCount    int
+	}
+
+	byStudy := make(map[string]*studyAgg)
 	for _, f := range h.files {
-		if _, exists := studyMap[f.StudyInstanceUID]; !exists {
-			studyMap[f.StudyInstanceUID] = map[string]interface{}{
-				"0020000D": map[string]interface{}{"vr": "UI", "Value": []string{f.StudyInstanceUID}},
-				"00080020": map[string]interface{}{"vr": "DA", "Value": []string{f.StudyDate}},
-				"00081030": map[string]interface{}{"vr": "LO", "Value": []string{f.StudyDescription}},
-				"00100010": map[string]interface{}{"vr": "PN", "Value": []map[string]string{{"Alphabetic": f.PatientName}}},
-				"00100020": map[string]interface{}{"vr": "LO", "Value": []string{f.PatientID}},
-				"00080061": map[string]interface{}{"vr": "CS", "Value": []string{f.Modality}},
+		a, ok := byStudy[f.StudyInstanceUID]
+		if !ok {
+			a = &studyAgg{
+				studyUID:   f.StudyInstanceUID,
+				modalities: make(map[string]struct{}),
+				seriesUIDs: make(map[string]struct{}),
 			}
+			byStudy[f.StudyInstanceUID] = a
+		}
+		a.seriesUIDs[f.SeriesInstanceUID] = struct{}{}
+		a.instanceCount++
+		if f.Modality != "" {
+			a.modalities[f.Modality] = struct{}{}
+		}
+		if f.StudyDate != "" && (a.studyDate == "" || f.StudyDate > a.studyDate) {
+			a.studyDate = f.StudyDate
+		}
+		// Prefer the longest description (often from true image instances vs short SR/DOC labels).
+		if len(f.StudyDescription) > len(a.studyDescription) {
+			a.studyDescription = f.StudyDescription
+		}
+		if f.PatientName != "" && a.patientName == "" {
+			a.patientName = f.PatientName
+		}
+		if f.PatientID != "" && a.patientID == "" {
+			a.patientID = f.PatientID
 		}
 	}
 
-	results := make([]map[string]interface{}, 0, len(studyMap))
-	for _, v := range studyMap {
-		results = append(results, v)
+	results := make([]map[string]interface{}, 0, len(byStudy))
+	for _, a := range byStudy {
+		mods := make([]string, 0, len(a.modalities))
+		for m := range a.modalities {
+			mods = append(mods, m)
+		}
+		sort.Strings(mods)
+		row := map[string]interface{}{
+			"0020000D": map[string]interface{}{"vr": "UI", "Value": []string{a.studyUID}},
+			"00080020": map[string]interface{}{"vr": "DA", "Value": []string{a.studyDate}},
+			"00081030": map[string]interface{}{"vr": "LO", "Value": []string{a.studyDescription}},
+			"00100010": map[string]interface{}{"vr": "PN", "Value": []map[string]string{{"Alphabetic": a.patientName}}},
+			"00100020": map[string]interface{}{"vr": "LO", "Value": []string{a.patientID}},
+			"00080061": map[string]interface{}{"vr": "CS", "Value": mods},
+			"00201206": map[string]interface{}{"vr": "IS", "Value": []string{strconv.Itoa(len(a.seriesUIDs))}},
+			"00201208": map[string]interface{}{"vr": "IS", "Value": []string{strconv.Itoa(a.instanceCount)}},
+		}
+		results = append(results, row)
 	}
 
 	setDicomWebJSONHeaders(w)
@@ -257,25 +337,57 @@ func (h *DicomWebHandler) HandleSeries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	seriesMap := make(map[string]map[string]interface{})
+	type seriesAgg struct {
+		seriesUID       string
+		seriesNumber    string
+		description     string
+		modality        string
+		instanceCount   int
+	}
+	bySeries := make(map[string]*seriesAgg)
 	for _, f := range h.files {
 		if f.StudyInstanceUID != studyUID {
 			continue
 		}
-		if _, exists := seriesMap[f.SeriesInstanceUID]; !exists {
-			seriesMap[f.SeriesInstanceUID] = map[string]interface{}{
-				"0020000E": map[string]interface{}{"vr": "UI", "Value": []string{f.SeriesInstanceUID}},
-				"0020000D": map[string]interface{}{"vr": "UI", "Value": []string{f.StudyInstanceUID}},
-				"00200011": map[string]interface{}{"vr": "IS", "Value": []string{f.SeriesNumber}},
-				"0008103E": map[string]interface{}{"vr": "LO", "Value": []string{f.SeriesDescription}},
-				"00080060": map[string]interface{}{"vr": "CS", "Value": []string{f.Modality}},
+		sa, ok := bySeries[f.SeriesInstanceUID]
+		if !ok {
+			sa = &seriesAgg{seriesUID: f.SeriesInstanceUID}
+			bySeries[f.SeriesInstanceUID] = sa
+		}
+		sa.instanceCount++
+		if f.SeriesNumber != "" && sa.seriesNumber == "" {
+			sa.seriesNumber = f.SeriesNumber
+		}
+		if f.Modality != "" {
+			if sa.modality == "" {
+				sa.modality = f.Modality
+			} else if f.Rows > 0 && f.Columns > 0 {
+				switch sa.modality {
+				case "DOC", "SR", "PR", "REG", "OT":
+					sa.modality = f.Modality
+				}
 			}
+		}
+		if len(f.SeriesDescription) > len(sa.description) {
+			sa.description = f.SeriesDescription
 		}
 	}
 
-	results := make([]map[string]interface{}, 0, len(seriesMap))
-	for _, v := range seriesMap {
-		results = append(results, v)
+	results := make([]map[string]interface{}, 0, len(bySeries))
+	for _, sa := range bySeries {
+		mod := sa.modality
+		if mod == "" {
+			mod = "OT"
+		}
+		row := map[string]interface{}{
+			"0020000E": map[string]interface{}{"vr": "UI", "Value": []string{sa.seriesUID}},
+			"0020000D": map[string]interface{}{"vr": "UI", "Value": []string{studyUID}},
+			"00200011": map[string]interface{}{"vr": "IS", "Value": []string{sa.seriesNumber}},
+			"0008103E": map[string]interface{}{"vr": "LO", "Value": []string{sa.description}},
+			"00080060": map[string]interface{}{"vr": "CS", "Value": []string{mod}},
+			"00201209": map[string]interface{}{"vr": "IS", "Value": []string{strconv.Itoa(sa.instanceCount)}},
+		}
+		results = append(results, row)
 	}
 
 	setDicomWebJSONHeaders(w)
@@ -377,9 +489,13 @@ func (h *DicomWebHandler) instanceMetaMap(f DicomFile) map[string]interface{} {
 		"00080016": map[string]interface{}{"vr": "UI", "Value": []string{f.SOPClassUID}},
 		"0020000D": map[string]interface{}{"vr": "UI", "Value": []string{f.StudyInstanceUID}},
 		"0020000E": map[string]interface{}{"vr": "UI", "Value": []string{f.SeriesInstanceUID}},
-		"00080060": map[string]interface{}{"vr": "CS", "Value": []string{f.Modality}},
 		"00200013": map[string]interface{}{"vr": "IS", "Value": []string{f.InstanceNumber}},
 	}
+	mod := f.Modality
+	if mod == "" {
+		mod = "OT"
+	}
+	m["00080060"] = map[string]interface{}{"vr": "CS", "Value": []string{mod}}
 	if f.TransferSyntaxUID != "" {
 		m["00020010"] = map[string]interface{}{"vr": "UI", "Value": []string{f.TransferSyntaxUID}}
 	}
@@ -428,6 +544,21 @@ func (h *DicomWebHandler) instanceMetaMap(f DicomFile) map[string]interface{} {
 	}
 	if len(f.WindowWidth) > 0 {
 		m["00281051"] = map[string]interface{}{"vr": "DS", "Value": f.WindowWidth}
+	}
+	if strings.TrimSpace(f.SliceThickness) != "" {
+		m["00180050"] = map[string]interface{}{"vr": "DS", "Value": []string{f.SliceThickness}}
+	}
+	if strings.TrimSpace(f.SpacingBetweenSlices) != "" {
+		m["00180088"] = map[string]interface{}{"vr": "DS", "Value": []string{f.SpacingBetweenSlices}}
+	}
+	if strings.TrimSpace(f.RescaleIntercept) != "" {
+		m["00281052"] = map[string]interface{}{"vr": "DS", "Value": []string{f.RescaleIntercept}}
+	}
+	if strings.TrimSpace(f.RescaleSlope) != "" {
+		m["00281053"] = map[string]interface{}{"vr": "DS", "Value": []string{f.RescaleSlope}}
+	}
+	if len(f.ImageType) > 0 {
+		m["00080008"] = map[string]interface{}{"vr": "CS", "Value": f.ImageType}
 	}
 	return m
 }
