@@ -340,26 +340,100 @@ const BurnPanel = () => {
                           </Typography>
                         </Alert>
                       ) : (
-                        <>
-                          <Alert severity="success" icon={<CheckCircleIcon />}>
-                            <Typography variant="body2" className="font-medium">
-                              {buildJob.filename}
-                            </Typography>
-                            OHIF viewer ISO is ready. Download it and burn to CD/DVD on your PC.
-                          </Alert>
-                          <Button
-                            variant="contained"
-                            color="success"
-                            size="large"
-                            fullWidth
-                            startIcon={<DownloadIcon />}
-                            onClick={handleDownload}
-                            className="cursor-pointer"
-                            aria-label="Download ISO file"
+                        <Box
+                          sx={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "10px",
+                            width: "100%",
+                          }}
+                        >
+                          <Paper
+                            variant="outlined"
+                            sx={{
+                              p: 2,
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 2,
+                              borderColor: "success.light",
+                            }}
                           >
-                            Download ISO to My PC
-                          </Button>
-                        </>
+                            <Box
+                              sx={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: 1,
+                              }}
+                            >
+                              <CheckCircleIcon
+                                color="success"
+                                fontSize="small"
+                                sx={{ mt: 0.25, flexShrink: 0 }}
+                                aria-hidden
+                              />
+                              <Typography variant="body2" color="text.secondary">
+                                {buildJob.filename} — OHIF web viewer with{" "}
+                                <code className="text-xs">DICOM/</code> on disc
+                                (browser-based viewer on disc)
+                              </Typography>
+                            </Box>
+                            <Button
+                              variant="contained"
+                              color="success"
+                              size="large"
+                              fullWidth
+                              startIcon={<DownloadIcon />}
+                              onClick={handleDownload}
+                              className="cursor-pointer"
+                              aria-label="Download ISO file"
+                            >
+                              Download ISO to My PC
+                            </Button>
+                          </Paper>
+                          {buildJob.kpacs_download_ready === true && (
+                            <Paper
+                              variant="outlined"
+                              sx={{
+                                p: 2,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 2,
+                              }}
+                            >
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  alignItems: "flex-start",
+                                  gap: 1,
+                                }}
+                              >
+                                <CheckCircleIcon
+                                  color="primary"
+                                  fontSize="small"
+                                  sx={{ mt: 0.25, flexShrink: 0 }}
+                                  aria-hidden
+                                />
+                                <Typography variant="body2" color="text.secondary">
+                                  {buildJob.kpacs_filename
+                                    ? `${buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer on disc)`
+                                    : "K-PACS Lite disc image with DICOMDIR (Windows viewer on disc)"}
+                                </Typography>
+                              </Box>
+                              <Button
+                                variant="contained"
+                                color="primary"
+                                size="large"
+                                fullWidth
+                                startIcon={<DownloadIcon />}
+                                onClick={handleDownloadKpacs}
+                                className="cursor-pointer"
+                                aria-label="Download K-PACS disc ISO file"
+                              >
+                                Download K-PACS to My PC
+                              </Button>
+                            </Paper>
+                          )}
+                        </Box>
                       )}
                       {buildJob.status === "complete" && buildJob.kpacs_error && (
                         <Alert severity="warning" className="mt-2" role="alert">
@@ -371,25 +445,50 @@ const BurnPanel = () => {
                           </Typography>
                         </Alert>
                       )}
-                      {buildJob.kpacs_download_ready && (
-                        <Button
-                          variant="contained"
-                          color="primary"
-                          size="large"
-                          fullWidth
-                          className="mt-3 cursor-pointer"
-                          startIcon={<DownloadIcon />}
-                          onClick={handleDownloadKpacs}
-                          aria-label="Download K-PACS disc ISO file"
+                      {hideOhifIsoDownload && buildJob.kpacs_download_ready && (
+                        <Paper
+                          variant="outlined"
+                          sx={{
+                            mt: "10px",
+                            p: 2,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 2,
+                            width: "100%",
+                          }}
                         >
-                          Download K-PACS to My PC
-                        </Button>
-                      )}
-                      {buildJob.kpacs_download_ready && buildJob.kpacs_filename && (
-                        <Typography variant="caption" className="mt-1 block text-center text-gray-600">
-                          {buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer
-                          on disc)
-                        </Typography>
+                          <Box
+                            sx={{
+                              display: "flex",
+                              alignItems: "flex-start",
+                              gap: 1,
+                            }}
+                          >
+                            <CheckCircleIcon
+                              color="primary"
+                              fontSize="small"
+                              sx={{ mt: 0.25, flexShrink: 0 }}
+                              aria-hidden
+                            />
+                            <Typography variant="body2" color="text.secondary">
+                              {buildJob.kpacs_filename
+                                ? `${buildJob.kpacs_filename} — K-PACS Lite layout with DICOMDIR (Windows viewer on disc)`
+                                : "K-PACS Lite disc image with DICOMDIR (Windows viewer on disc)"}
+                            </Typography>
+                          </Box>
+                          <Button
+                            variant="contained"
+                            color="primary"
+                            size="large"
+                            fullWidth
+                            className="cursor-pointer"
+                            startIcon={<DownloadIcon />}
+                            onClick={handleDownloadKpacs}
+                            aria-label="Download K-PACS disc ISO file"
+                          >
+                            Download K-PACS to My PC
+                          </Button>
+                        </Paper>
                       )}
                       <Typography
                         variant="body2"

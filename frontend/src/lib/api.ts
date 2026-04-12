@@ -20,6 +20,8 @@ export const searchPatients = async (params: {
   node_ae_title: string;
   patient_name?: string;
   patient_id?: string;
+  study_date_from?: string;
+  study_date_to?: string;
 }): Promise<Patient[]> => {
   const response = await api.post("/patients/search", params);
   return response.data.patients;

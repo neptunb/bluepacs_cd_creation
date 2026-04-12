@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional
 from datetime import date
 
@@ -17,6 +17,20 @@ class PatientQuery(BaseModel):
     modality: Optional[str] = None
     study_date_from: Optional[str] = None
     study_date_to: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_search_criteria(self):
+        has_name_or_id = bool(
+            (self.patient_name or "").strip() or (self.patient_id or "").strip()
+        )
+        has_study_dates = bool(
+            (self.study_date_from or "").strip() or (self.study_date_to or "").strip()
+        )
+        if not has_name_or_id and not has_study_dates:
+            raise ValueError(
+                "Provide patient name, patient id, and/or study date range (from/to)"
+            )
+        return self
 
 
 class PatientResult(BaseModel):

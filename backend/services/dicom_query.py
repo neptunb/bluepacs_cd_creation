@@ -124,6 +124,8 @@ class DicomQueryService:
         self,
         patient_name: str = "",
         patient_id: str = "",
+        study_date_from: Optional[str] = None,
+        study_date_to: Optional[str] = None,
     ) -> list[dict]:
         """Search patients via STUDY-level C-FIND (most compatible with Orthanc)."""
         def _find():
@@ -143,14 +145,21 @@ class DicomQueryService:
                 ds.PatientBirthDate = ""
                 ds.PatientSex = ""
                 ds.StudyInstanceUID = ""
-                ds.StudyDate = ""
+                if study_date_from and study_date_to:
+                    ds.StudyDate = f"{study_date_from}-{study_date_to}"
+                elif study_date_from:
+                    ds.StudyDate = f"{study_date_from}-"
+                elif study_date_to:
+                    ds.StudyDate = f"-{study_date_to}"
+                else:
+                    ds.StudyDate = ""
                 ds.StudyDescription = ""
                 ds.ModalitiesInStudy = ""
                 ds.NumberOfStudyRelatedSeries = ""
 
                 logger.info(
-                    "C-FIND patient search: PatientName=%r  PatientID=%r  to %s@%s:%d",
-                    ds.PatientName, ds.PatientID,
+                    "C-FIND patient search: PatientName=%r  PatientID=%r  StudyDate=%r  to %s@%s:%d",
+                    ds.PatientName, ds.PatientID, ds.StudyDate,
                     self.remote_ae, self.remote_host, self.remote_port,
                 )
 

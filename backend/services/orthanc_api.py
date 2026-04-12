@@ -133,10 +133,61 @@ class OrthancApiService:
         self,
         patient_name: str = "",
         patient_id: str = "",
+        study_date_from: Optional[str] = None,
+        study_date_to: Optional[str] = None,
     ) -> list[dict]:
-        query = {}
         name_plain = patient_name_for_find(patient_name)
         id_plain = plain_query_value(patient_id)
+        date_from = (study_date_from or "").strip()
+        date_to = (study_date_to or "").strip()
+        has_study_dates = bool(date_from or date_to)
+
+        if has_study_dates:
+            query: dict[str, str] = {}
+            if date_from and date_to:
+                query["StudyDate"] = f"{date_from}-{date_to}"
+            elif date_from:
+                query["StudyDate"] = f"{date_from}-"
+            elif date_to:
+                query["StudyDate"] = f"-{date_to}"
+            query["PatientName"] = name_plain if name_plain else "*"
+            query["PatientID"] = id_plain if id_plain else "*"
+            payload = {
+                "Level": "Study",
+                "Query": query,
+                "Expand": True,
+            }
+            results = await self._post(
+                "/tools/find",
+                payload,
+                timeout_sec=120,
+                label="find_patients(study_date)",
+            )
+            if results is None:
+                return []
+
+            merged: dict[str, dict] = {}
+            for item in results:
+                pm = item.get("PatientMainDicomTags") or {}
+                pid = pm.get("PatientID") or ""
+                if not pid:
+                    continue
+                if pid not in merged:
+                    merged[pid] = {
+                        "patient_id": pid,
+                        "patient_name": pm.get("PatientName", ""),
+                        "birth_date": pm.get("PatientBirthDate", ""),
+                        "sex": pm.get("PatientSex", ""),
+                    }
+            patients = list(merged.values())
+            logger.info(
+                "Orthanc REST found %d patients (study-date query, %d studies)",
+                len(patients),
+                len(results),
+            )
+            return patients
+
+        query = {}
         if name_plain:
             query["PatientName"] = name_plain
         if id_plain:

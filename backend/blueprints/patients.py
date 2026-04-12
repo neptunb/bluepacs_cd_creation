@@ -52,6 +52,8 @@ async def search_patients(request: Request):
         patients = await service.find_patients(
             patient_name=query.patient_name or "",
             patient_id=query.patient_id or "",
+            study_date_from=query.study_date_from,
+            study_date_to=query.study_date_to,
         )
     except Exception as e:
         logger.exception("Patient search failed for node %s", node["ae_title"])
