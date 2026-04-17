@@ -62,6 +62,11 @@ class Config:
         return _load_nodes()["nodes"]
 
     @staticmethod
+    def dicom_remote_ae(node: dict) -> str:
+        """Called AE for C-ECHO / C-FIND / C-MOVE when different from node id (e.g. ORTHANC)."""
+        return (node.get("remote_dicom_ae") or node["ae_title"]).strip()
+
+    @staticmethod
     def get_node(ae_title: str) -> dict | None:
         for node in _load_nodes()["nodes"]:
             if node["ae_title"] == ae_title:

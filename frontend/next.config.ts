@@ -11,8 +11,12 @@ const backendUrl =
   process.env.NEXT_PUBLIC_API_URL ||
   "http://127.0.0.1:8100";
 
+/** Subpath behind reverse proxy (e.g. /cd-yaz). Empty for local root. */
+const cdBasePath = (process.env.CD_BASE_PATH || "").trim();
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  ...(cdBasePath ? { basePath: cdBasePath } : {}),
   async rewrites() {
     return [
       {

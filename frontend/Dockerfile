@@ -11,6 +11,13 @@ COPY . .
 ARG BACKEND_INTERNAL_URL=http://cd-backend:8100
 ENV BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL}
 
+# Subpath behind reverse proxy (e.g. /cd-yaz). Omit for root deployment.
+ARG CD_BASE_PATH=
+ENV CD_BASE_PATH=${CD_BASE_PATH}
+# Client axios/download URLs must match server basePath; default NEXT_PUBLIC to CD_BASE_PATH.
+ARG NEXT_PUBLIC_CD_BASE_PATH=
+ENV NEXT_PUBLIC_CD_BASE_PATH=${NEXT_PUBLIC_CD_BASE_PATH:-$CD_BASE_PATH}
+
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

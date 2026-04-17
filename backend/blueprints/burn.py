@@ -250,7 +250,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
         builder = CdBuilderService(
             local_ae=config.local_ae_title,
             local_port=config.local_port,
-            remote_ae=node["ae_title"],
+            remote_ae=config.dicom_remote_ae(node),
             remote_host=node["host"],
             remote_port=node["port"],
             temp_dir=config.TEMP_DIR,

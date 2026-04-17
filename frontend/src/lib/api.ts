@@ -1,8 +1,11 @@
 import axios from "axios";
 import type { DicomNode, Patient, Study, Series, BuildJob } from "./types";
 
+const apiPrefix =
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_CD_BASE_PATH) || "";
+
 const api = axios.create({
-  baseURL: "/api",
+  baseURL: `${apiPrefix}/api`,
   headers: { "Content-Type": "application/json" },
 });
 
@@ -89,11 +92,11 @@ export const getBuildStatus = async (job_id: string): Promise<BuildJob> => {
 };
 
 export const getDownloadUrl = (job_id: string): string => {
-  return `/api/burn/download/${job_id}`;
+  return `${apiPrefix}/api/burn/download/${job_id}`;
 };
 
 export const getKpacsDownloadUrl = (job_id: string): string => {
-  return `/api/burn/download-kpacs/${job_id}`;
+  return `${apiPrefix}/api/burn/download-kpacs/${job_id}`;
 };
 
 export const cleanupJob = async (job_id: string): Promise<void> => {

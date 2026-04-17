@@ -27,7 +27,7 @@ def _get_service(node: dict):
     logger.info("Using DICOM C-FIND for %s", node["ae_title"])
     return DicomQueryService(
         local_ae=config.local_ae_title,
-        remote_ae=node["ae_title"],
+        remote_ae=config.dicom_remote_ae(node),
         remote_host=node["host"],
         remote_port=node["port"],
     )
@@ -111,7 +111,7 @@ async def test_cfind(request: Request):
 
     service = DicomQueryService(
         local_ae=config.local_ae_title,
-        remote_ae=node["ae_title"],
+        remote_ae=config.dicom_remote_ae(node),
         remote_host=node["host"],
         remote_port=node["port"],
     )

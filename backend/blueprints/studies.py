@@ -63,7 +63,7 @@ def _get_service(node: dict):
         )
     return DicomQueryService(
         local_ae=config.local_ae_title,
-        remote_ae=node["ae_title"],
+        remote_ae=config.dicom_remote_ae(node),
         remote_host=node["host"],
         remote_port=node["port"],
     )
