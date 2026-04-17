@@ -15,6 +15,12 @@
       "host": "host.docker.internal",
       "port": 11112,
       "name": "Horos (Local)"
+    },
+    {
+      "ae_title": "tugras_iMac",
+      "host": "192.168.1.9",
+      "port": 11112,
+      "name": "Horos (Tuğra TACAL)"
     }
   ]
 }
