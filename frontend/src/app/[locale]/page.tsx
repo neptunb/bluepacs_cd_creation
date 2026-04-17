@@ -1,6 +1,7 @@
 "use client";
 
 import { Container } from "@mui/material";
+import CdAccessGate from "@/components/cd-access-gate";
 import Header from "@/components/header";
 import NodeSelector from "@/components/node-selector";
 import PatientSearch from "@/components/patient-search";
@@ -11,12 +12,14 @@ const HomePage = () => {
   return (
     <main className="min-h-screen bg-gray-50">
       <Header />
-      <Container maxWidth="xl" className="py-6 space-y-4">
-        <NodeSelector />
-        <PatientSearch />
-        <StudyBrowser />
-        <BurnPanel />
-      </Container>
+      <CdAccessGate>
+        <Container maxWidth="xl" className="space-y-4 py-6">
+          <NodeSelector />
+          <PatientSearch />
+          <StudyBrowser />
+          <BurnPanel />
+        </Container>
+      </CdAccessGate>
     </main>
   );
 };

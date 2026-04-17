@@ -1,3 +1,9 @@
+/** Cloudflare Access identity for header (GET /api/auth/identity). */
+export interface AuthIdentity {
+  display_name: string | null;
+  email: string | null;
+}
+
 export interface DicomNode {
   ae_title: string;
   host: string;

@@ -1,4 +1,9 @@
 {
+  "access": {
+    "checking": "Erişim denetleniyor…",
+    "deniedTitle": "Erişim reddedildi",
+    "deniedBody": "CD oluşturma yetkisi olan bir BluePACS hesabıyla oturum açın ve bu sayfayı aynı site üzerinden açın (Ultramar çerezleri gerekir). Yetkiniz olması gerektiğini düşünüyorsanız yöneticinizden CD oluşturma ayrıcalığını isteyin."
+  },
   "metadata": {
     "title": "BluePACS CD Oluşturucu",
     "description": "Hastalar için gömülü görüntüleyicili DICOM CD oluşturun"

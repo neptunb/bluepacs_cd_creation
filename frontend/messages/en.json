@@ -1,4 +1,9 @@
 {
+  "access": {
+    "checking": "Checking access…",
+    "deniedTitle": "Access denied",
+    "deniedBody": "Sign in to BluePACS with an account that has CD creation permission, then open this page from the same site (including Ultramar cookies). If you believe you should have access, ask your administrator to grant the CD creation privilege."
+  },
   "metadata": {
     "title": "BluePACS CD Creator",
     "description": "Create DICOM CDs with embedded viewer for patients"

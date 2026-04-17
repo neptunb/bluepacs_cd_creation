@@ -1,5 +1,12 @@
 import axios from "axios";
-import type { DicomNode, Patient, Study, Series, BuildJob } from "./types";
+import type {
+  DicomNode,
+  Patient,
+  Study,
+  Series,
+  BuildJob,
+  AuthIdentity,
+} from "./types";
 
 const apiPrefix =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_CD_BASE_PATH) || "";
@@ -7,7 +14,25 @@ const apiPrefix =
 const api = axios.create({
   baseURL: `${apiPrefix}/api`,
   headers: { "Content-Type": "application/json" },
+  withCredentials: true,
 });
+
+export const checkCdAccess = async (): Promise<boolean> => {
+  try {
+    const response = await api.get("/access");
+    return response.status === 200 && response.data?.allowed === true;
+  } catch {
+    return false;
+  }
+};
+
+export const fetchAuthIdentity = async (): Promise<AuthIdentity> => {
+  const response = await axios.get<AuthIdentity>(`${apiPrefix}/cf-user`, {
+    headers: { Accept: "application/json" },
+    withCredentials: true,
+  });
+  return response.data;
+};
 
 export const fetchNodes = async (): Promise<DicomNode[]> => {
   const response = await api.get("/nodes/");

@@ -38,6 +38,9 @@ class Config:
         os.getenv("ORTHANC_RECENT_STUDIES_CONCURRENCY", "32")
     )
 
+    # Ultramar phpapi: session + P_CAN_USE_CD_CREATION (empty URL = skip auth for local dev)
+    CD_AUTH_VALIDATE_URL: str = (os.getenv("CD_AUTH_VALIDATE_URL") or "").strip()
+
     @staticmethod
     def orthanc_http_credentials(node: dict) -> tuple[str, str]:
         """HTTP Basic for Orthanc REST. Environment ORTHANC_USER / ORTHANC_PASSWORD override node JSON."""
