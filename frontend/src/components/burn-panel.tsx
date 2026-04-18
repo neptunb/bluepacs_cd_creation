@@ -142,15 +142,21 @@ const BurnPanel = () => {
           expected_instances: expectedInstances > 0 ? expectedInstances : null,
         });
 
+        let consecutivePollErrors = 0;
         pollRef.current = setInterval(async () => {
           try {
             const status = await getBuildStatus(job_id);
+            consecutivePollErrors = 0;
             setBuildJob(status);
             if (status.status === "complete" || status.status === "error") {
               if (pollRef.current) clearInterval(pollRef.current);
             }
-          } catch {
-            if (pollRef.current) clearInterval(pollRef.current);
+          } catch (pollErr) {
+            consecutivePollErrors += 1;
+            if (consecutivePollErrors >= 5) {
+              console.error("Build status polling failed repeatedly", pollErr);
+              if (pollRef.current) clearInterval(pollRef.current);
+            }
           }
         }, 2000);
       } catch (err) {

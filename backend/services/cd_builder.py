@@ -1,3 +1,4 @@
+import asyncio
 import os
 import stat
 import shutil
@@ -402,6 +403,13 @@ class CdBuilderService:
             ./README.txt               patient-facing instructions
             ./study/<StudyInstanceUID>/<SeriesInstanceUID>/*.dcm
 
+        The retrieved ``work_dir/DICOM`` tree is moved (``os.rename``) to
+        ``staging/study`` so we avoid a 2GB+ physical copy on large studies,
+        and restored afterwards so ``build_kpacs_iso`` still finds it. All
+        blocking I/O and the ISO write run in a worker thread so the Sanic
+        event loop keeps responding to ``/status`` polls while the disc is
+        assembled.
+
         ``include_viewer=False`` produces a data-only disc (no binaries, no autorun).
         """
         dicom_src = os.path.join(work_dir, "DICOM")
@@ -413,36 +421,62 @@ class CdBuilderService:
         if include_viewer:
             self._require_standalone_assets()
 
-        staging = os.path.join(self.temp_dir, f"ohif_stage_{uuid.uuid4()}")
-        try:
+        safe_name = "".join(
+            c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
+        )[:32]
+        safe_patient_id = "".join(
+            c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
+        )[:32] or "UNKNOWNID"
+        iso_filename = f"DICOM_{safe_name}_{safe_patient_id}.iso"
+        iso_path = os.path.join(self.temp_dir, iso_filename)
+
+        def _assemble_and_write() -> None:
+            staging = os.path.join(self.temp_dir, f"ohif_stage_{uuid.uuid4()}")
             study_dest = os.path.join(staging, "study")
-            shutil.copytree(dicom_src, study_dest, symlinks=False)
+            os.makedirs(staging, exist_ok=True)
 
-            if include_viewer:
-                self._copy_standalone_launchers(staging)
-                _write_standalone_autorun(staging, patient_name)
-                _write_patient_readme(staging, patient_name, patient_id)
-
-            safe_name = "".join(
-                c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
-            )[:32]
-            safe_patient_id = "".join(
-                c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
-            )[:32] or "UNKNOWNID"
-            iso_filename = f"DICOM_{safe_name}_{safe_patient_id}.iso"
-            iso_path = os.path.join(self.temp_dir, iso_filename)
-
-            # No Rock Ridge: same as K-PACS ISO — macOS Finder often shows RR+Joliet pycdlib
-            # images as an empty volume even though files exist (Windows sees them). Unix
-            # launchers may need chmod +x once copied (see README.txt on disc).
-            _create_iso(staging, iso_path, patient_name, rock_ridge=None)
-            return iso_path
-        finally:
-            if os.path.isdir(staging):
+            moved = False
+            try:
+                # Move the DICOM tree (same filesystem under TEMP_DIR → O(1) rename);
+                # fall back to a full copy if the rename is rejected (e.g. separate mount).
                 try:
-                    shutil.rmtree(staging)
+                    os.rename(dicom_src, study_dest)
+                    moved = True
                 except OSError as e:
-                    logger.warning("Could not remove OHIF staging %s: %s", staging, e)
+                    logger.warning(
+                        "Could not rename %s -> %s (%s); falling back to copytree",
+                        dicom_src, study_dest, e,
+                    )
+                    shutil.copytree(dicom_src, study_dest, symlinks=False)
+
+                if include_viewer:
+                    self._copy_standalone_launchers(staging)
+                    _write_standalone_autorun(staging, patient_name)
+                    _write_patient_readme(staging, patient_name, patient_id)
+
+                # No Rock Ridge: same as K-PACS ISO — macOS Finder often shows RR+Joliet
+                # pycdlib images as an empty volume even though files exist (Windows sees
+                # them). Unix launchers may need chmod +x once copied (see README.txt).
+                _create_iso(staging, iso_path, patient_name, rock_ridge=None)
+            finally:
+                # Always put DICOM back so build_kpacs_iso (which reads work_dir/DICOM)
+                # can run next even if ISO creation raised partway through.
+                if moved and os.path.isdir(study_dest) and not os.path.exists(dicom_src):
+                    try:
+                        os.rename(study_dest, dicom_src)
+                    except OSError as restore_exc:
+                        logger.error(
+                            "Could not restore DICOM from %s to %s: %s",
+                            study_dest, dicom_src, restore_exc,
+                        )
+                if os.path.isdir(staging):
+                    try:
+                        shutil.rmtree(staging)
+                    except OSError as e:
+                        logger.warning("Could not remove OHIF staging %s: %s", staging, e)
+
+        await asyncio.to_thread(_assemble_and_write)
+        return iso_path
 
     def _require_standalone_assets(self) -> None:
         path = self.standalone_viewer_path
@@ -479,7 +513,11 @@ class CdBuilderService:
         patient_name: str,
         patient_id: str,
     ) -> str:
-        """Build a second ISO with K-PACS layout: DICOM mirror, template viewer, DICOMDIR."""
+        """Build a second ISO with K-PACS layout: DICOM mirror, template viewer, DICOMDIR.
+
+        Offloads the copytree + dcmmkdir + pycdlib write to a worker thread so the
+        Sanic event loop keeps answering ``/status`` polls while the disc builds.
+        """
         dicom_src = os.path.join(work_dir, "DICOM")
         if not os.path.isdir(dicom_src):
             raise RuntimeError("No DICOM folder found; cannot build K-PACS ISO")
@@ -490,32 +528,36 @@ class CdBuilderService:
                 f"K-PACS template directory missing or invalid: {tpl or '(not configured)'}"
             )
 
-        staging = os.path.join(self.temp_dir, f"kpacs_stage_{uuid.uuid4()}")
-        try:
-            dicom_dest = os.path.join(staging, "DICOM")
-            shutil.copytree(dicom_src, dicom_dest, symlinks=False)
-            _reorganize_dicom_tree_for_interchange(dicom_dest)
-            _copy_kpacs_template_files(tpl, staging)
-            _generate_dicomdir_dcmtk(staging)
+        safe_name = "".join(
+            c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
+        )[:32]
+        safe_patient_id = "".join(
+            c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
+        )[:32] or "UNKNOWNID"
+        iso_filename = f"KPACS_{safe_name}_{safe_patient_id}.iso"
+        iso_path = os.path.join(self.temp_dir, iso_filename)
 
-            safe_name = "".join(
-                c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
-            )[:32]
-            safe_patient_id = "".join(
-                c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
-            )[:32] or "UNKNOWNID"
-            iso_filename = f"KPACS_{safe_name}_{safe_patient_id}.iso"
-            iso_path = os.path.join(self.temp_dir, iso_filename)
+        def _assemble_and_write() -> None:
+            staging = os.path.join(self.temp_dir, f"kpacs_stage_{uuid.uuid4()}")
+            try:
+                dicom_dest = os.path.join(staging, "DICOM")
+                shutil.copytree(dicom_src, dicom_dest, symlinks=False)
+                _reorganize_dicom_tree_for_interchange(dicom_dest)
+                _copy_kpacs_template_files(tpl, staging)
+                _generate_dicomdir_dcmtk(staging)
 
-            # No Rock Ridge: K-PACS is Windows-only; macOS Finder often shows RR-heavy ISOs as empty.
-            _create_iso(staging, iso_path, patient_name, rock_ridge=None)
-            return iso_path
-        finally:
-            if os.path.isdir(staging):
-                try:
-                    shutil.rmtree(staging)
-                except OSError as e:
-                    logger.warning("Could not remove K-PACS staging %s: %s", staging, e)
+                # No Rock Ridge: K-PACS is Windows-only; macOS Finder often shows
+                # RR-heavy ISOs as empty.
+                _create_iso(staging, iso_path, patient_name, rock_ridge=None)
+            finally:
+                if os.path.isdir(staging):
+                    try:
+                        shutil.rmtree(staging)
+                    except OSError as e:
+                        logger.warning("Could not remove K-PACS staging %s: %s", staging, e)
+
+        await asyncio.to_thread(_assemble_and_write)
+        return iso_path
 
 
 def _create_iso(
