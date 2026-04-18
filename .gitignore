@@ -24,9 +24,6 @@ node_modules/
 .next/
 out/
 
-# Go
-launcher/build/
-
 # CD Builder temp
 /tmp/bluepacs_cd/
 
@@ -36,7 +33,11 @@ launcher/build/
 *.swp
 *.swo
 
-# OHIF build (generated)
-cd_template/viewer/*
-!cd_template/viewer/.gitkeep
+# Standalone viewer binaries (large, built externally; see cd_template/standalone/README.md)
+cd_template/standalone/*
+!cd_template/standalone/.gitkeep
+!cd_template/standalone/README.md
+!cd_template/standalone/study/
+cd_template/standalone/study/*
+!cd_template/standalone/study/README.txt
 

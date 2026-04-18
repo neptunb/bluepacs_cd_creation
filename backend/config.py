@@ -25,8 +25,12 @@ class Config:
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
 
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/bluepacs_cd")
-    OHIF_VIEWER_PATH: str = os.getenv("OHIF_VIEWER_PATH", "../cd_template/viewer")
-    LAUNCHER_PATH: str = os.getenv("LAUNCHER_PATH", "../launcher/build")
+    # Standalone OHIF viewer: the self-contained macos_view / linux_view /
+    # windows_view.exe binaries plus the study/ placeholder folder. Populate
+    # with `./scripts/sync_standalone.sh` (see cd_template/standalone/README.md).
+    STANDALONE_VIEWER_PATH: str = os.getenv(
+        "STANDALONE_VIEWER_PATH", "../cd_template/standalone"
+    )
     # K-PACS Lite viewer binaries and config (no DICOM/DICOMDIR — those are generated per job).
     KPACS_TEMPLATE_PATH: str = os.getenv("KPACS_TEMPLATE_PATH", "../cd_template/kpacs")
 

@@ -10,16 +10,14 @@ services:
     volumes:
       - ./backend/dicom_nodes.json:/app/dicom_nodes.json
       - ./cd_template:/app/cd_template
-      - ./launcher/build:/app/launcher_build
       - cd_temp:/tmp/bluepacs_cd
     environment:
       HOST: "0.0.0.0"
       PORT: "8100"
       DEBUG: "true"
       TEMP_DIR: /tmp/bluepacs_cd
-      OHIF_VIEWER_PATH: /app/cd_template/viewer
+      STANDALONE_VIEWER_PATH: /app/cd_template/standalone
       KPACS_TEMPLATE_PATH: /app/cd_template/kpacs
-      LAUNCHER_PATH: /app/launcher_build
       ORTHANC_USER: ${ORTHANC_USER:-}
       ORTHANC_PASSWORD: ${ORTHANC_PASSWORD:-}
     networks:

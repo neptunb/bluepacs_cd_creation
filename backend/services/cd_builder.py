@@ -113,6 +113,58 @@ def _write_kpacs_autorun(staging_dir: str, launcher_exe: str) -> None:
         f.write(f"open={launcher_exe}\n")
 
 
+def _write_standalone_autorun(staging_dir: str, patient_name: str) -> None:
+    """AutoRun descriptor for the standalone viewer CD (Windows only — other OSes ignore it)."""
+    path = os.path.join(staging_dir, "autorun.inf")
+    patient_name_ascii = _ascii_safe_text(patient_name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("[AutoRun]\n")
+        f.write("open=windows_view.exe\n")
+        f.write(f"label=DICOM Images - {patient_name_ascii}\n")
+        f.write("icon=windows_view.exe,0\n")
+        f.write("action=Open DICOM Viewer\n")
+
+
+def _write_patient_readme(staging_dir: str, patient_name: str, patient_id: str) -> None:
+    """Patient-facing README explaining how to open each platform's standalone launcher."""
+    readme = os.path.join(staging_dir, "README.txt")
+    sep = "=" * 50
+    with open(readme, "w", encoding="utf-8") as f:
+        f.write(f"DICOM Images CD - {patient_name} ({patient_id})\n")
+        f.write(sep + "\n\n")
+        f.write("This CD contains your medical images along with a portable viewer\n")
+        f.write("that requires no installation.\n\n")
+        f.write("HOW TO VIEW YOUR IMAGES\n")
+        f.write("-" * 50 + "\n")
+        f.write("  Windows: Double-click  windows_view.exe\n")
+        f.write("  macOS:   Double-click  macos_view\n")
+        f.write("           (right-click > Open the first time)\n")
+        f.write("  Linux:   Open a terminal here and run:  ./linux_view\n\n")
+        f.write("A web browser window opens automatically showing your images.\n\n")
+        f.write("macOS security (Gatekeeper)\n")
+        f.write("-" * 50 + "\n")
+        f.write(
+            "If macOS says the app cannot be verified, that is normal for an\n"
+            "unsigned viewer. Try in order:\n"
+            "  1) Right-click macos_view, choose Open, then click Open again.\n"
+            "  2) System Settings > Privacy & Security > Open Anyway.\n"
+            "  3) Terminal: xattr -cr '/path/to/macos_view' then try again.\n"
+            "If TextEdit opens with random characters instead, run in Terminal:\n"
+            "  chmod +x macos_view && ./macos_view\n\n"
+        )
+        f.write("CONTENTS\n")
+        f.write("-" * 50 + "\n")
+        f.write("  study/            Your DICOM image files\n")
+        f.write("  windows_view.exe  Windows launcher (embedded OHIF viewer)\n")
+        f.write("  macos_view        macOS launcher (embedded OHIF viewer)\n")
+        f.write("  linux_view        Linux launcher (embedded OHIF viewer)\n\n")
+        f.write("CLOSING\n")
+        f.write("-" * 50 + "\n")
+        f.write("Close the browser tab, then the terminal/command window that\n")
+        f.write("appeared when the viewer started.\n\n")
+        f.write(sep + "\n")
+
+
 def _dicom_instance_sort_key(path: Path) -> tuple:
     """Sort key for instances: InstanceNumber when present, else SOPInstanceUID, else filename."""
     try:
@@ -240,8 +292,15 @@ def _generate_dicomdir_dcmtk(staging_dir: str) -> None:
         raise RuntimeError(f"dcmmkdir failed (exit {proc.returncode}): {detail}")
 
 
+STANDALONE_LAUNCHERS: tuple[str, ...] = (
+    "macos_view",
+    "linux_view",
+    "windows_view.exe",
+)
+
+
 class CdBuilderService:
-    """Builds a CD/DVD ISO image containing DICOM files, OHIF viewer, and launchers."""
+    """Builds a CD/DVD ISO image containing DICOM files and the standalone OHIF viewer."""
 
     def __init__(
         self,
@@ -251,8 +310,7 @@ class CdBuilderService:
         remote_host: str,
         remote_port: int,
         temp_dir: str,
-        viewer_path: str,
-        launcher_path: str,
+        standalone_viewer_path: str,
         orthanc_url: str = "",
         orthanc_user: str = "",
         orthanc_password: str = "",
@@ -269,8 +327,7 @@ class CdBuilderService:
             orthanc_password=orthanc_password,
         )
         self.temp_dir = temp_dir
-        self.viewer_path = viewer_path
-        self.launcher_path = launcher_path
+        self.standalone_viewer_path = standalone_viewer_path
         self.kpacs_template_path = kpacs_template_path
 
     async def retrieve_studies(
@@ -335,75 +392,86 @@ class CdBuilderService:
         patient_id: str,
         include_viewer: bool = True,
     ) -> str:
+        """Build the patient CD ISO with the standalone OHIF viewer.
+
+        Layout on disc (Joliet names):
+            ./macos_view               standalone launcher (macOS)
+            ./linux_view               standalone launcher (Linux)
+            ./windows_view.exe         standalone launcher (Windows, autorun target)
+            ./autorun.inf              Windows AutoRun descriptor
+            ./README.txt               patient-facing instructions
+            ./study/<StudyInstanceUID>/<SeriesInstanceUID>/*.dcm
+
+        ``include_viewer=False`` produces a data-only disc (no binaries, no autorun).
+        """
+        dicom_src = os.path.join(work_dir, "DICOM")
+        if not os.path.isdir(dicom_src):
+            raise RuntimeError(
+                "No DICOM folder found in work_dir; retrieval must run before build_iso"
+            )
+
         if include_viewer:
-            viewer_dest = os.path.join(work_dir, "viewer")
-            if os.path.exists(self.viewer_path):
-                shutil.copytree(self.viewer_path, viewer_dest, dirs_exist_ok=True)
+            self._require_standalone_assets()
 
-            if os.path.exists(self.launcher_path):
-                for launcher in ["windows_view.exe", "macos_view", "linux_view"]:
-                    src = os.path.join(self.launcher_path, launcher)
-                    if os.path.exists(src):
-                        dest = os.path.join(work_dir, launcher)
-                        shutil.copy2(src, dest)
-                        if launcher in ("macos_view", "linux_view"):
-                            try:
-                                os.chmod(dest, 0o755)
-                            except OSError as e:
-                                logger.warning("chmod launcher %s: %s", dest, e)
+        staging = os.path.join(self.temp_dir, f"ohif_stage_{uuid.uuid4()}")
+        try:
+            study_dest = os.path.join(staging, "study")
+            shutil.copytree(dicom_src, study_dest, symlinks=False)
 
-            autorun = os.path.join(work_dir, "autorun.inf")
-            patient_name_ascii = _ascii_safe_text(patient_name)
-            with open(autorun, "w", encoding="utf-8") as f:
-                f.write("[AutoRun]\n")
-                f.write("open=windows_view.exe\n")
-                f.write(f"label=DICOM Images - {patient_name_ascii}\n")
+            if include_viewer:
+                self._copy_standalone_launchers(staging)
+                _write_standalone_autorun(staging, patient_name)
+                _write_patient_readme(staging, patient_name, patient_id)
 
-            readme = os.path.join(work_dir, "README.txt")
-            with open(readme, "w", encoding="utf-8") as f:
-                f.write(f"DICOM Images CD - {patient_name} ({patient_id})\n")
-                f.write("=" * 50 + "\n\n")
-                f.write("To view your medical images:\n\n")
-                f.write("  Windows: Double-click windows_view.exe\n")
-                f.write("  macOS:   First open macos_view (see macOS note below)\n")
-                f.write("  Linux:   Run ./linux_view in terminal\n\n")
-                f.write(
-                    "macOS security (Gatekeeper): If macOS says the app cannot be "
-                    "verified or was not opened, that is normal for unsigned viewer "
-                    "launchers. Try in order:\n"
-                    "  1) Right-click macos_view, choose Open, then click Open again.\n"
-                    "  2) System Settings -> Privacy & Security -> scroll down -> "
-                    "Open Anyway (for macos_view).\n"
-                    "  3) Terminal: xattr -cr '/path/to/macos_view' then open again "
-                    "(removes quarantine if present).\n"
-                    "If TextEdit (or another editor) opens and shows random characters, "
-                    "the file was not treated as a program. Open Terminal, cd to the "
-                    "folder that contains macos_view, then run:\n"
-                    "  chmod +x macos_view && ./macos_view\n\n"
-                )
-                f.write("A browser window will open with the image viewer.\n")
-                f.write("Close the browser and terminal when finished.\n\n")
-                f.write("Where are the images on this disc?\n")
-                f.write("  • This ISO uses the folder name DICOM/ (StudyInstanceUID subfolders).\n")
-                f.write("  • There is no STUDY/ folder on this disc by design.\n")
-                f.write("  • For a portable archive named STUDY/, use \"Download STUDY (ZIP)\" ")
-                f.write("in the web app — that download is a .zip only, not an ISO.\n")
+            safe_name = "".join(
+                c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
+            )[:32]
+            safe_patient_id = "".join(
+                c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
+            )[:32] or "UNKNOWNID"
+            iso_filename = f"DICOM_{safe_name}_{safe_patient_id}.iso"
+            iso_path = os.path.join(self.temp_dir, iso_filename)
 
-        safe_name = "".join(
-            c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
-        )[:32]
-        safe_patient_id = "".join(
-            c for c in _ascii_safe_text(patient_id) if c.isalnum() or c in "_-"
-        )[:32] or "UNKNOWNID"
-        iso_filename = f"DICOM_{safe_name}_{safe_patient_id}.iso"
-        iso_path = os.path.join(self.temp_dir, iso_filename)
+            # No Rock Ridge: same as K-PACS ISO — macOS Finder often shows RR+Joliet pycdlib
+            # images as an empty volume even though files exist (Windows sees them). Unix
+            # launchers may need chmod +x once copied (see README.txt on disc).
+            _create_iso(staging, iso_path, patient_name, rock_ridge=None)
+            return iso_path
+        finally:
+            if os.path.isdir(staging):
+                try:
+                    shutil.rmtree(staging)
+                except OSError as e:
+                    logger.warning("Could not remove OHIF staging %s: %s", staging, e)
 
-        # No Rock Ridge: same as K-PACS ISO — macOS Finder often shows RR+Joliet pycdlib
-        # images as an empty volume even though files exist (Windows sees them). Unix
-        # launchers may need chmod +x once copied (see README.txt on disc).
-        _create_iso(work_dir, iso_path, patient_name, rock_ridge=None)
+    def _require_standalone_assets(self) -> None:
+        path = self.standalone_viewer_path
+        if not path or not os.path.isdir(path):
+            raise RuntimeError(
+                "STANDALONE_VIEWER_PATH is not configured or does not exist: "
+                f"{path or '(unset)'}. See cd_template/standalone/README.md and run "
+                "./scripts/sync_standalone.sh."
+            )
+        missing = [
+            b for b in STANDALONE_LAUNCHERS
+            if not os.path.isfile(os.path.join(path, b))
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Standalone viewer folder {path} is missing binaries: "
+                f"{', '.join(missing)}. Run ./scripts/sync_standalone.sh to populate it."
+            )
 
-        return iso_path
+    def _copy_standalone_launchers(self, staging_dir: str) -> None:
+        for name in STANDALONE_LAUNCHERS:
+            src = os.path.join(self.standalone_viewer_path, name)
+            dest = os.path.join(staging_dir, name)
+            shutil.copy2(src, dest)
+            if name in ("macos_view", "linux_view"):
+                try:
+                    os.chmod(dest, 0o755)
+                except OSError as e:
+                    logger.warning("chmod launcher %s: %s", dest, e)
 
     async def build_kpacs_iso(
         self,

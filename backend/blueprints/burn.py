@@ -22,21 +22,26 @@ active_jobs: dict[str, dict] = {}
 job_locks: dict[str, Lock] = {}
 
 
-def _resolve_backend_relative(path_str: str) -> str:
-    """Resolve paths like ../cd_template/viewer relative to the backend package root."""
-    p = Path(path_str)
-    if p.is_absolute():
-        return str(p.resolve())
-    backend_root = Path(__file__).resolve().parent.parent
-    return str((backend_root / p).resolve())
-
-
 def _resolve_kpacs_template_path(path_str: str) -> str:
     """Resolve K-PACS template dir.
 
     Local dev: backend lives in repo/backend, so ../cd_template/kpacs works.
     Docker (backend/Dockerfile): app root is /app, so ../cd_template/kpacs wrongly becomes
     /cd_template/kpacs; the compose volume mounts templates at /app/cd_template/kpacs instead.
+    """
+    return _resolve_template_dir(path_str, "kpacs", "K-PACS")
+
+
+def _resolve_standalone_path(path_str: str) -> str:
+    """Resolve standalone viewer dir — same dual-location fallback as K-PACS."""
+    return _resolve_template_dir(path_str, "standalone", "standalone")
+
+
+def _resolve_template_dir(path_str: str, leaf: str, label: str) -> str:
+    """Probe ``<backend>/../cd_template/<leaf>`` then ``<backend>/cd_template/<leaf>``.
+
+    The second candidate is what the Docker image sees because compose mounts the
+    repo's ``cd_template/`` inside ``/app/cd_template`` rather than ``/cd_template``.
     """
     backend_root = Path(__file__).resolve().parent.parent
     raw = Path((path_str or ".").strip())
@@ -47,7 +52,7 @@ def _resolve_kpacs_template_path(path_str: str) -> str:
     else:
         candidates.append(str((backend_root / raw).resolve()))
 
-    candidates.append(str((backend_root / "cd_template" / "kpacs").resolve()))
+    candidates.append(str((backend_root / "cd_template" / leaf).resolve()))
 
     seen: set[str] = set()
     for c in candidates:
@@ -55,7 +60,7 @@ def _resolve_kpacs_template_path(path_str: str) -> str:
             continue
         seen.add(c)
         if os.path.isdir(c):
-            logger.info("Using K-PACS template directory: %s", c)
+            logger.info("Using %s template directory: %s", label, c)
             return c
 
     return candidates[0]
@@ -247,6 +252,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
 
         orthanc_user, orthanc_password = config.orthanc_http_credentials(node)
         kpacs_tpl = _resolve_kpacs_template_path(config.KPACS_TEMPLATE_PATH)
+        standalone_path = _resolve_standalone_path(config.STANDALONE_VIEWER_PATH)
         builder = CdBuilderService(
             local_ae=config.local_ae_title,
             local_port=config.local_port,
@@ -254,8 +260,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             remote_host=node["host"],
             remote_port=node["port"],
             temp_dir=config.TEMP_DIR,
-            viewer_path=config.OHIF_VIEWER_PATH,
-            launcher_path=config.LAUNCHER_PATH,
+            standalone_viewer_path=standalone_path,
             orthanc_url=node.get("orthanc_url", ""),
             orthanc_user=orthanc_user,
             orthanc_password=orthanc_password,

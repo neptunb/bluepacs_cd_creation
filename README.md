@@ -1,6 +1,6 @@
 # BluePACS CD Creation
 
-A web application for creating DICOM CD/DVDs with an embedded portable viewer (OHIF 3.11) for patients. No installation required on the patient's machine.
+A web application for creating DICOM CD/DVDs with an embedded portable viewer (OHIF) for patients. No installation required on the patient's machine.
 
 ## Architecture
 
@@ -21,15 +21,20 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
               ┌───────▼────────┐
               │   CD Contents  │
               ├────────────────┤
-              │ DICOM/         │ ← DICOM files
-              │ viewer/        │ ← OHIF 3.11 static build
-              │ windows_view.exe│ ← Go launcher (Windows)
-              │ macos_view     │ ← Go launcher (macOS)
-              │ linux_view     │ ← Go launcher (Linux)
+              │ study/         │ ← DICOM files (per StudyInstanceUID)
+              │ windows_view.exe│ ← Standalone viewer (Windows)
+              │ macos_view     │ ← Standalone viewer (macOS)
+              │ linux_view     │ ← Standalone viewer (Linux)
               │ autorun.inf    │ ← Windows autorun
               │ README.txt     │ ← Patient instructions
               └────────────────┘
 ```
+
+Each standalone launcher is a single self-contained binary (built from the
+neighbouring `Viewers/standalone/` repo) that bundles a Go web server, the OHIF
+PWA, and Cornerstone's DICOM image loader. On insert, it scans `./study/` and
+opens the viewer in the default browser — no separate `viewer/` folder or
+`launcher/` package is burned onto the disc.
 
 ## Components
 
@@ -43,23 +48,13 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
 ### 2. Backend (`/backend`)
 - **Sanic Python** REST API
 - DICOM Query/Retrieve (C-FIND, C-MOVE, C-GET) via pynetdicom
-- ISO image creation using pycdlib (user downloads and burns locally)
-- Optional **K-PACS Lite** second ISO: copies viewer binaries from [`cd_template/kpacs/`](cd_template/kpacs), copies the same retrieved `DICOM/` tree into a K-PACS staging folder, and runs **DCMTK `dcmmkdir`** to create a root `DICOMDIR` (install DCMTK and ensure `dcmmkdir` is on `PATH`; override template path with `KPACS_TEMPLATE_PATH` if needed)
+- ISO image creation using pycdlib (user downloads and burns locally) — DICOM files are placed under `study/<StudyInstanceUID>/...` alongside the three standalone viewer binaries
+- Optional **K-PACS Lite** second ISO: copies viewer binaries from [`cd_template/kpacs/`](cd_template/kpacs), copies the retrieved `DICOM/` tree into a K-PACS staging folder, and runs **DCMTK `dcmmkdir`** to create a root `DICOMDIR` (install DCMTK and ensure `dcmmkdir` is on `PATH`; override template path with `KPACS_TEMPLATE_PATH` if needed)
 - DICOM node (AE Title) management
 
-### 3. Go Launcher (`/launcher`)
-- Portable executables for Windows, macOS, Linux
-- Starts embedded HTTP server on localhost
-- Serves OHIF viewer static files
-- Implements minimal DICOMweb (WADO-RS/QIDO-RS) from local `DICOM/` folder
-- Opens default browser automatically
-- Zero installation required
-
-### 4. CD Template (`/cd_template`)
-- Directory structure template for burned CDs
-- OHIF 3.11 static viewer build
-- K-PACS Lite Windows viewer and DLLs (no patient DICOM)
-- Patient-facing instructions
+### 3. CD Template (`/cd_template`)
+- [`cd_template/standalone/`](cd_template/standalone) — the three standalone viewer binaries (`macos_view`, `linux_view`, `windows_view.exe`) plus a `study/README.txt` placeholder. Populate with `./scripts/sync_standalone.sh` — see [cd_template/standalone/README.md](cd_template/standalone/README.md). The binaries are git-ignored.
+- [`cd_template/kpacs/`](cd_template/kpacs) — K-PACS Lite Windows viewer and DLLs (no patient DICOM; optional second ISO only)
 
 ## How It Works
 
@@ -86,27 +81,36 @@ A web application for creating DICOM CD/DVDs with an embedded portable viewer (O
 ### Prerequisites
 - Python 3.11+
 - Node.js 20+
-- Go 1.21+
+- Populated [`cd_template/standalone/`](cd_template/standalone) (see below) — the OHIF ISO build will refuse to start without it
 - **DCMTK** (`dcmmkdir` on `PATH`) if you want the K-PACS disc ISO when running the backend **outside** Docker (e.g. `brew install dcmtk` on macOS). The **backend Docker image** installs the `dcmtk` package so `dcmmkdir` is available inside the container.
 - CD/DVD burner (for actual burning)
 
 ### Setup
 ```bash
-# Backend
+# 1. Sync the standalone viewer binaries (expects ../Viewers/standalone/dist next door)
+./scripts/sync_standalone.sh
+
+# 2. Backend
 cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python server.py
 
-# Frontend
-cd frontend
+# 3. Frontend
+cd ../frontend
 npm install
 npm run dev
+```
 
-# Build Launchers
-cd launcher
-make all
+### Rebuilding the standalone viewers
+The binaries are produced by the neighbouring `Viewers/standalone/` repo:
+
+```bash
+# inside the Viewers checkout
+make -C standalone all
+# back in this repo — copy the fresh dist/ into cd_template/standalone/
+./scripts/sync_standalone.sh
 ```
 
 ## Environment Variables

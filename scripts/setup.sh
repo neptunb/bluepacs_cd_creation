@@ -29,11 +29,10 @@ echo "Setting up frontend..."
 cd "$PROJECT_DIR/frontend"
 npm install
 
-# Launcher dependencies
+# Standalone viewer binaries (OHIF + embedded web server, built in ../Viewers/standalone)
 echo ""
-echo "Fetching Go dependencies..."
-cd "$PROJECT_DIR/launcher"
-go mod tidy 2>/dev/null || echo "Go not installed - skip launcher setup"
+echo "Syncing standalone viewer binaries..."
+"$SCRIPT_DIR/sync_standalone.sh" || echo "(skip) populate cd_template/standalone manually - see cd_template/standalone/README.md"
 
 echo ""
 echo "======================================"
@@ -45,7 +44,3 @@ echo "  1. Edit backend/.env with your DICOM node settings"
 echo "  2. Run: cd backend && source venv/bin/activate && python server.py"
 echo "  3. Run: cd frontend && npm run dev"
 echo "  4. Open http://localhost:3000"
-echo ""
-echo "To build CD components:"
-echo "  ./scripts/build_ohif.sh     - Build OHIF viewer"
-echo "  ./scripts/build_launchers.sh - Build Go launchers"
