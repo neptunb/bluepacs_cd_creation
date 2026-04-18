@@ -70,6 +70,8 @@ class BurnRequest(BaseModel):
     series: Optional[list[str]] = None  # optional subset of SeriesInstanceUIDs
     expected_instances: Optional[int] = None
     include_viewer: bool = True
+    # When True, copy linux_view onto the OHIF disc (default off — optional).
+    include_linux_launcher: bool = False
     include_kpacs: bool = True
     # OHIF step 1: retrieve into STUDY/ and offer ZIP only (no ISO; K-PACS unchanged).
     study_zip_only: bool = False

@@ -19,9 +19,10 @@ cd_template/standalone/
     └── README.txt      patient-facing "drop DICOM files here" notice
 ```
 
-The backend refuses to build an ISO if any of `macos_view`, `linux_view`,
-`windows_view.exe` is missing from this folder (override the path with
-`STANDALONE_VIEWER_PATH`).
+The backend refuses to build an ISO if `macos_view` or `windows_view.exe` is
+missing. `linux_view` is optional: operators can include it on the disc via the
+UI checkbox; if they do, the binary must be present here. Override the path with
+`STANDALONE_VIEWER_PATH`.
 
 ## How to populate
 

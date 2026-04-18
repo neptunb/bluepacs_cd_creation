@@ -14,6 +14,11 @@ import pydicom
 import pycdlib
 from pycdlib import pycdlibexception
 
+from constants.disc_layout import (
+    OHIF_DISC_IMAGE_SUBDIR,
+    WORKSPACE_DICOM_SUBDIR,
+    WORKSPACE_STUDY_ZIP_SUBDIR,
+)
 from services.dicom_retrieve import DicomRetrieveService
 
 logger = logging.getLogger(__name__)
@@ -126,7 +131,12 @@ def _write_standalone_autorun(staging_dir: str, patient_name: str) -> None:
         f.write("action=Open DICOM Viewer\n")
 
 
-def _write_patient_readme(staging_dir: str, patient_name: str, patient_id: str) -> None:
+def _write_patient_readme(
+    staging_dir: str,
+    patient_name: str,
+    patient_id: str,
+    include_linux_launcher: bool = False,
+) -> None:
     """Patient-facing README explaining how to open each platform's standalone launcher."""
     readme = os.path.join(staging_dir, "README.txt")
     sep = "=" * 50
@@ -140,8 +150,9 @@ def _write_patient_readme(staging_dir: str, patient_name: str, patient_id: str) 
         f.write("  Windows: Double-click  windows_view.exe\n")
         f.write("  macOS:   Double-click  macos_view\n")
         f.write("           (right-click > Open the first time)\n")
-        f.write("  Linux:   Open a terminal here and run:  ./linux_view\n\n")
-        f.write("A web browser window opens automatically showing your images.\n\n")
+        if include_linux_launcher:
+            f.write("  Linux:   Open a terminal here and run:  ./linux_view\n")
+        f.write("\nA web browser window opens automatically showing your images.\n\n")
         f.write("macOS security (Gatekeeper)\n")
         f.write("-" * 50 + "\n")
         f.write(
@@ -158,7 +169,9 @@ def _write_patient_readme(staging_dir: str, patient_name: str, patient_id: str) 
         f.write("  study/            Your DICOM image files\n")
         f.write("  windows_view.exe  Windows launcher (embedded OHIF viewer)\n")
         f.write("  macos_view        macOS launcher (embedded OHIF viewer)\n")
-        f.write("  linux_view        Linux launcher (embedded OHIF viewer)\n\n")
+        if include_linux_launcher:
+            f.write("  linux_view        Linux launcher (embedded OHIF viewer)\n")
+        f.write("\n")
         f.write("CLOSING\n")
         f.write("-" * 50 + "\n")
         f.write("Close the browser tab, then the terminal/command window that\n")
@@ -269,7 +282,7 @@ def _generate_dicomdir_dcmtk(staging_dir: str) -> None:
             "If you run the backend in Docker, rebuild the image so the Dockerfile can install "
             "the `dcmtk` package."
         )
-    dicom_root = os.path.join(staging_dir, "DICOM")
+    dicom_root = os.path.join(staging_dir, WORKSPACE_DICOM_SUBDIR)
     if not os.path.isdir(dicom_root):
         raise RuntimeError("Internal error: staging DICOM folder missing for DICOMDIR")
 
@@ -280,7 +293,7 @@ def _generate_dicomdir_dcmtk(staging_dir: str) -> None:
         "-Nxc",
         "+D",
         "DICOMDIR",
-        "DICOM",
+        WORKSPACE_DICOM_SUBDIR,
     ]
     proc = subprocess.run(
         cmd,
@@ -298,6 +311,10 @@ STANDALONE_LAUNCHERS: tuple[str, ...] = (
     "linux_view",
     "windows_view.exe",
 )
+
+# linux_view is optional on the disc; these two are always required when include_viewer is True.
+REQUIRED_STANDALONE_LAUNCHERS: tuple[str, ...] = ("macos_view", "windows_view.exe")
+LINUX_LAUNCHER = "linux_view"
 
 
 class CdBuilderService:
@@ -336,16 +353,19 @@ class CdBuilderService:
         study_uids: list[str],
         series_filter: Optional[list[str]] = None,
         on_instance_retrieved: Optional[Callable[[int], None]] = None,
-        images_subdir: str = "DICOM",
+        images_subdir: str = WORKSPACE_DICOM_SUBDIR,
     ) -> str:
         """Retrieve instances under ``work_dir/<images_subdir>/<StudyInstanceUID>/...``.
 
-        Default ``DICOM`` keeps K-PACS and OHIF ISO layouts unchanged. Use ``STUDY`` for a
-        STUDY-folder ZIP download without modifying K-PACS code paths (they still expect
-        ``DICOM`` from the default retrieve).
+        Default ``WORKSPACE_DICOM_SUBDIR`` keeps K-PACS and OHIF ISO layouts unchanged. Use
+        ``WORKSPACE_STUDY_ZIP_SUBDIR`` for a STUDY-folder ZIP download without modifying
+        K-PACS code paths (they still expect ``DICOM`` from the default retrieve).
         """
-        if images_subdir not in ("DICOM", "STUDY"):
-            raise ValueError("images_subdir must be 'DICOM' or 'STUDY'")
+        if images_subdir not in (WORKSPACE_DICOM_SUBDIR, WORKSPACE_STUDY_ZIP_SUBDIR):
+            raise ValueError(
+                "images_subdir must be "
+                f"{WORKSPACE_DICOM_SUBDIR!r} or {WORKSPACE_STUDY_ZIP_SUBDIR!r}"
+            )
 
         work_dir = os.path.join(self.temp_dir, str(uuid.uuid4()))
         root_dir = os.path.join(work_dir, images_subdir)
@@ -392,16 +412,18 @@ class CdBuilderService:
         patient_name: str,
         patient_id: str,
         include_viewer: bool = True,
+        include_linux_launcher: bool = False,
     ) -> str:
         """Build the patient CD ISO with the standalone OHIF viewer.
 
         Layout on disc (Joliet names):
             ./macos_view               standalone launcher (macOS)
-            ./linux_view               standalone launcher (Linux)
+            ./linux_view               standalone launcher (Linux), optional
             ./windows_view.exe         standalone launcher (Windows, autorun target)
             ./autorun.inf              Windows AutoRun descriptor
             ./README.txt               patient-facing instructions
             ./study/<StudyInstanceUID>/<SeriesInstanceUID>/*.dcm
+            (folder name matches ``OHIF_DISC_IMAGE_SUBDIR`` in ``constants.disc_layout``).
 
         The retrieved ``work_dir/DICOM`` tree is moved (``os.rename``) to
         ``staging/study`` so we avoid a 2GB+ physical copy on large studies,
@@ -412,14 +434,14 @@ class CdBuilderService:
 
         ``include_viewer=False`` produces a data-only disc (no binaries, no autorun).
         """
-        dicom_src = os.path.join(work_dir, "DICOM")
+        dicom_src = os.path.join(work_dir, WORKSPACE_DICOM_SUBDIR)
         if not os.path.isdir(dicom_src):
             raise RuntimeError(
                 "No DICOM folder found in work_dir; retrieval must run before build_iso"
             )
 
         if include_viewer:
-            self._require_standalone_assets()
+            self._require_standalone_assets(include_linux_launcher=include_linux_launcher)
 
         safe_name = "".join(
             c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
@@ -432,7 +454,7 @@ class CdBuilderService:
 
         def _assemble_and_write() -> None:
             staging = os.path.join(self.temp_dir, f"ohif_stage_{uuid.uuid4()}")
-            study_dest = os.path.join(staging, "study")
+            study_dest = os.path.join(staging, OHIF_DISC_IMAGE_SUBDIR)
             os.makedirs(staging, exist_ok=True)
 
             moved = False
@@ -450,9 +472,16 @@ class CdBuilderService:
                     shutil.copytree(dicom_src, study_dest, symlinks=False)
 
                 if include_viewer:
-                    self._copy_standalone_launchers(staging)
+                    self._copy_standalone_launchers(
+                        staging, include_linux_launcher=include_linux_launcher
+                    )
                     _write_standalone_autorun(staging, patient_name)
-                    _write_patient_readme(staging, patient_name, patient_id)
+                    _write_patient_readme(
+                        staging,
+                        patient_name,
+                        patient_id,
+                        include_linux_launcher=include_linux_launcher,
+                    )
 
                 # No Rock Ridge: same as K-PACS ISO — macOS Finder often shows RR+Joliet
                 # pycdlib images as an empty volume even though files exist (Windows sees
@@ -478,7 +507,7 @@ class CdBuilderService:
         await asyncio.to_thread(_assemble_and_write)
         return iso_path
 
-    def _require_standalone_assets(self) -> None:
+    def _require_standalone_assets(self, include_linux_launcher: bool = False) -> None:
         path = self.standalone_viewer_path
         if not path or not os.path.isdir(path):
             raise RuntimeError(
@@ -486,8 +515,11 @@ class CdBuilderService:
                 f"{path or '(unset)'}. See cd_template/standalone/README.md and run "
                 "./scripts/sync_standalone.sh."
             )
+        required = list(REQUIRED_STANDALONE_LAUNCHERS)
+        if include_linux_launcher:
+            required.append(LINUX_LAUNCHER)
         missing = [
-            b for b in STANDALONE_LAUNCHERS
+            b for b in required
             if not os.path.isfile(os.path.join(path, b))
         ]
         if missing:
@@ -496,8 +528,13 @@ class CdBuilderService:
                 f"{', '.join(missing)}. Run ./scripts/sync_standalone.sh to populate it."
             )
 
-    def _copy_standalone_launchers(self, staging_dir: str) -> None:
-        for name in STANDALONE_LAUNCHERS:
+    def _copy_standalone_launchers(
+        self, staging_dir: str, include_linux_launcher: bool = False
+    ) -> None:
+        names = list(REQUIRED_STANDALONE_LAUNCHERS)
+        if include_linux_launcher:
+            names.append(LINUX_LAUNCHER)
+        for name in names:
             src = os.path.join(self.standalone_viewer_path, name)
             dest = os.path.join(staging_dir, name)
             shutil.copy2(src, dest)
@@ -518,7 +555,7 @@ class CdBuilderService:
         Offloads the copytree + dcmmkdir + pycdlib write to a worker thread so the
         Sanic event loop keeps answering ``/status`` polls while the disc builds.
         """
-        dicom_src = os.path.join(work_dir, "DICOM")
+        dicom_src = os.path.join(work_dir, WORKSPACE_DICOM_SUBDIR)
         if not os.path.isdir(dicom_src):
             raise RuntimeError("No DICOM folder found; cannot build K-PACS ISO")
 
@@ -540,7 +577,7 @@ class CdBuilderService:
         def _assemble_and_write() -> None:
             staging = os.path.join(self.temp_dir, f"kpacs_stage_{uuid.uuid4()}")
             try:
-                dicom_dest = os.path.join(staging, "DICOM")
+                dicom_dest = os.path.join(staging, WORKSPACE_DICOM_SUBDIR)
                 shutil.copytree(dicom_src, dicom_dest, symlinks=False)
                 _reorganize_dicom_tree_for_interchange(dicom_dest)
                 _copy_kpacs_template_files(tpl, staging)

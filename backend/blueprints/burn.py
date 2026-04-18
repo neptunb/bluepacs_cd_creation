@@ -10,6 +10,7 @@ from sanic import Blueprint, json as json_response
 from sanic.request import Request
 from sanic.response import file_stream
 
+from constants.disc_layout import WORKSPACE_STUDY_ZIP_SUBDIR
 from models.schemas import BurnRequest
 from services.cd_builder import CdBuilderService
 from config import config
@@ -73,14 +74,15 @@ def _safe_zip_basename(patient_id: str, job_id: str) -> str:
 
 
 def _zip_study_tree(work_dir: str, zip_path: str) -> None:
-    """Zip ``work_dir/STUDY/...`` so archive paths start with ``STUDY/`` (ZIP only — never ISO)."""
-    study_root = os.path.join(work_dir, "STUDY")
+    """Zip the retrieve workspace (``WORKSPACE_STUDY_ZIP_SUBDIR``) — ZIP download only, never ISO."""
+    study_root = os.path.join(work_dir, WORKSPACE_STUDY_ZIP_SUBDIR)
     if not os.path.isdir(study_root):
         raise RuntimeError("STUDY folder missing after retrieve")
     n_files = 0
+    zip_root = f"{WORKSPACE_STUDY_ZIP_SUBDIR}/"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         # Explicit root helps some ZIP tools show an empty STUDY tree consistently.
-        zinfo = zipfile.ZipInfo("STUDY/")
+        zinfo = zipfile.ZipInfo(zip_root)
         zinfo.external_attr = 0o40755 << 16
         zf.writestr(zinfo, b"")
         for root, _dirs, files in os.walk(study_root):
@@ -97,7 +99,7 @@ def _zip_study_tree(work_dir: str, zip_path: str) -> None:
         except OSError:
             pass
         raise RuntimeError(
-            "No files were packaged under STUDY/ — the ZIP would be empty. "
+            f"No files were packaged under {WORKSPACE_STUDY_ZIP_SUBDIR}/ — the ZIP would be empty. "
             "Check PACS retrieval (e.g. Orthanc orthanc_url) and selected studies/series."
         )
     logger.info("STUDY ZIP: wrote %d file(s) to %s", n_files, zip_path)
@@ -294,7 +296,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
                 burn_req.studies,
                 series_filter=burn_req.series,
                 on_instance_retrieved=on_instance_retrieved,
-                images_subdir="STUDY",
+                images_subdir=WORKSPACE_STUDY_ZIP_SUBDIR,
             )
             job["status"] = "building"
             job["message"] = "Creating ZIP of STUDY folder..."
@@ -336,6 +338,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             patient_name=burn_req.patient_name,
             patient_id=burn_req.patient_id,
             include_viewer=burn_req.include_viewer,
+            include_linux_launcher=burn_req.include_linux_launcher,
         )
 
         filename = os.path.basename(output_path)

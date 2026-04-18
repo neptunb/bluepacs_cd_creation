@@ -104,6 +104,7 @@ export const createCd = async (params: {
   series?: string[];
   expected_instances?: number;
   include_viewer?: boolean;
+  include_linux_launcher?: boolean;
   include_kpacs?: boolean;
   study_zip_only?: boolean;
 }): Promise<{ job_id: string }> => {

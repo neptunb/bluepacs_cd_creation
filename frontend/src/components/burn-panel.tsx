@@ -15,6 +15,8 @@ import {
   DialogContent,
   DialogActions,
   Divider,
+  Checkbox,
+  FormControlLabel,
 } from "@mui/material";
 import AlbumIcon from "@mui/icons-material/Album";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -59,6 +61,7 @@ const BurnPanel = () => {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeLinuxLauncher, setIncludeLinuxLauncher] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const firstSelectedStudy = studies.find((s) =>
@@ -94,6 +97,8 @@ const BurnPanel = () => {
           series: selectedSeries.length > 0 ? selectedSeries : undefined,
           expected_instances: expectedInstances > 0 ? expectedInstances : undefined,
           include_viewer: true,
+          include_linux_launcher:
+            !opts.studyZipOnly && includeLinuxLauncher,
           include_kpacs: !opts.studyZipOnly,
           study_zip_only: opts.studyZipOnly,
         });
@@ -146,6 +151,7 @@ const BurnPanel = () => {
       selectedSeries,
       setBuildJob,
       t,
+      includeLinuxLauncher,
     ]
   );
 
@@ -231,6 +237,24 @@ const BurnPanel = () => {
           >
             {t("buildIso")}
           </Button>
+
+          <FormControlLabel
+            className="m-0"
+            control={
+              <Checkbox
+                size="small"
+                checked={includeLinuxLauncher}
+                onChange={(e) => setIncludeLinuxLauncher(e.target.checked)}
+                disabled={!canBuild}
+                aria-label={t("includeLinuxLauncherAria")}
+              />
+            }
+            label={
+              <Typography variant="body2" className="text-gray-700">
+                {t("includeLinuxLauncher")}
+              </Typography>
+            }
+          />
 
           <Typography variant="caption" className="text-gray-500 max-w-xl block">
             {t("hintZip")}
