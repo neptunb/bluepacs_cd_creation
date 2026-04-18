@@ -1,5 +1,5 @@
 /**
- * Parse ModalitiesInStudy for matching (e.g. hide OHIF when NM is present).
+ * Parse ModalitiesInStudy for display and token matching (e.g. modality column).
  * Handles DICOM backslash form (CT\\MR), commas, and Python/JSON-ish list strings
  * like "['DOC', 'NM', 'OT']" from some PACS / pydicom str(MultiValue) paths.
  */

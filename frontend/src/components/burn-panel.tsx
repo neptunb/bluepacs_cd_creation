@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import {
   Paper,
@@ -30,29 +30,6 @@ import {
   getKpacsDownloadUrl,
   cleanupJob,
 } from "@/lib/api";
-import { modalitiesTokens } from "@/lib/modality-utils";
-
-const selectionIncludesNM = (
-  studies: { study_instance_uid: string; modalities_in_study: string | null }[],
-  selectedStudies: string[],
-  seriesMap: Record<string, { series_instance_uid: string; modality: string }[]>,
-  selectedSeries: string[]
-): boolean => {
-  if (selectedSeries.length > 0) {
-    for (const studyUid of selectedStudies) {
-      for (const ser of seriesMap[studyUid] ?? []) {
-        if (!selectedSeries.includes(ser.series_instance_uid)) continue;
-        if ((ser.modality ?? "").toUpperCase().trim() === "NM") return true;
-      }
-    }
-    return false;
-  }
-  for (const uid of selectedStudies) {
-    const study = studies.find((s) => s.study_instance_uid === uid);
-    if (study && modalitiesTokens(study.modalities_in_study).includes("NM")) return true;
-  }
-  return false;
-};
 
 const BUILD_STATUSES = [
   "queued",
@@ -76,7 +53,6 @@ const BurnPanel = () => {
     studies,
     selectedStudies,
     selectedSeries,
-    seriesMap,
     buildJob,
     setBuildJob,
   } = useCdStore();
@@ -96,11 +72,6 @@ const BurnPanel = () => {
     const study = studies.find((s) => s.study_instance_uid === studyUid);
     return sum + (study?.number_of_instances ?? 0);
   }, 0);
-
-  const hideOhifIsoDownload = useMemo(
-    () => selectionIncludesNM(studies, selectedStudies, seriesMap, selectedSeries),
-    [studies, selectedStudies, seriesMap, selectedSeries]
-  );
 
   const canBuild =
     Boolean(selectedNode) &&
@@ -353,131 +324,22 @@ const BurnPanel = () => {
                     </>
                   ) : (
                     <>
-                      {hideOhifIsoDownload ? (
-                        <Alert severity="info" role="status">
-                          <Typography variant="body2" className="font-medium">
-                            {t("nmTitle")}
-                          </Typography>
-                          <Typography variant="body2" className="mt-1">
-                            {t("nmBody")}
-                          </Typography>
-                        </Alert>
-                      ) : (
-                        <Box
-                          sx={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "10px",
-                            width: "100%",
-                          }}
-                        >
-                          <Paper
-                            variant="outlined"
-                            sx={{
-                              p: 2,
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 2,
-                              borderColor: "success.light",
-                            }}
-                          >
-                            <Box
-                              sx={{
-                                display: "flex",
-                                alignItems: "flex-start",
-                                gap: 1,
-                              }}
-                            >
-                              <CheckCircleIcon
-                                color="success"
-                                fontSize="small"
-                                sx={{ mt: 0.25, flexShrink: 0 }}
-                                aria-hidden
-                              />
-                              <Typography variant="body2" color="text.secondary">
-                                {t("ohifReady", { filename: buildJob.filename ?? "" })}
-                              </Typography>
-                            </Box>
-                            <Button
-                              variant="contained"
-                              color="success"
-                              size="large"
-                              fullWidth
-                              startIcon={<DownloadIcon />}
-                              onClick={handleDownload}
-                              className="cursor-pointer"
-                              aria-label={t("downloadIsoAria")}
-                            >
-                              {t("downloadIso")}
-                            </Button>
-                          </Paper>
-                          {buildJob.kpacs_download_ready === true && (
-                            <Paper
-                              variant="outlined"
-                              sx={{
-                                p: 2,
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: 2,
-                              }}
-                            >
-                              <Box
-                                sx={{
-                                  display: "flex",
-                                  alignItems: "flex-start",
-                                  gap: 1,
-                                }}
-                              >
-                                <CheckCircleIcon
-                                  color="primary"
-                                  fontSize="small"
-                                  sx={{ mt: 0.25, flexShrink: 0 }}
-                                  aria-hidden
-                                />
-                                <Typography variant="body2" color="text.secondary">
-                                  {buildJob.kpacs_filename
-                                    ? t("kpacsReadyNamed", {
-                                        filename: buildJob.kpacs_filename,
-                                      })
-                                    : t("kpacsReadyDefault")}
-                                </Typography>
-                              </Box>
-                              <Button
-                                variant="contained"
-                                color="primary"
-                                size="large"
-                                fullWidth
-                                startIcon={<DownloadIcon />}
-                                onClick={handleDownloadKpacs}
-                                className="cursor-pointer"
-                                aria-label={t("downloadKpacsAria")}
-                              >
-                                {t("downloadKpacs")}
-                              </Button>
-                            </Paper>
-                          )}
-                        </Box>
-                      )}
-                      {buildJob.status === "complete" && buildJob.kpacs_error && (
-                        <Alert severity="warning" className="mt-2" role="alert">
-                          <Typography variant="body2" className="font-medium">
-                            {t("kpacsUnavailableTitle")}
-                          </Typography>
-                          <Typography variant="body2" className="mt-1">
-                            {buildJob.kpacs_error}
-                          </Typography>
-                        </Alert>
-                      )}
-                      {hideOhifIsoDownload && buildJob.kpacs_download_ready && (
+                      <Box
+                        sx={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "10px",
+                          width: "100%",
+                        }}
+                      >
                         <Paper
                           variant="outlined"
                           sx={{
-                            mt: "10px",
                             p: 2,
                             display: "flex",
                             flexDirection: "column",
                             gap: 2,
-                            width: "100%",
+                            borderColor: "success.light",
                           }}
                         >
                           <Box
@@ -488,32 +350,83 @@ const BurnPanel = () => {
                             }}
                           >
                             <CheckCircleIcon
-                              color="primary"
+                              color="success"
                               fontSize="small"
                               sx={{ mt: 0.25, flexShrink: 0 }}
                               aria-hidden
                             />
                             <Typography variant="body2" color="text.secondary">
-                              {buildJob.kpacs_filename
-                                ? t("kpacsReadyNamed", {
-                                    filename: buildJob.kpacs_filename,
-                                  })
-                                : t("kpacsReadyDefault")}
+                              {t("ohifReady", { filename: buildJob.filename ?? "" })}
                             </Typography>
                           </Box>
                           <Button
                             variant="contained"
-                            color="primary"
+                            color="success"
                             size="large"
                             fullWidth
-                            className="cursor-pointer"
                             startIcon={<DownloadIcon />}
-                            onClick={handleDownloadKpacs}
-                            aria-label={t("downloadKpacsAria")}
+                            onClick={handleDownload}
+                            className="cursor-pointer"
+                            aria-label={t("downloadIsoAria")}
                           >
-                            {t("downloadKpacs")}
+                            {t("downloadIso")}
                           </Button>
                         </Paper>
+                        {buildJob.kpacs_download_ready === true && (
+                          <Paper
+                            variant="outlined"
+                            sx={{
+                              p: 2,
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 2,
+                            }}
+                          >
+                            <Box
+                              sx={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: 1,
+                              }}
+                            >
+                              <CheckCircleIcon
+                                color="primary"
+                                fontSize="small"
+                                sx={{ mt: 0.25, flexShrink: 0 }}
+                                aria-hidden
+                              />
+                              <Typography variant="body2" color="text.secondary">
+                                {buildJob.kpacs_filename
+                                  ? t("kpacsReadyNamed", {
+                                      filename: buildJob.kpacs_filename,
+                                    })
+                                  : t("kpacsReadyDefault")}
+                              </Typography>
+                            </Box>
+                            <Button
+                              variant="contained"
+                              color="primary"
+                              size="large"
+                              fullWidth
+                              startIcon={<DownloadIcon />}
+                              onClick={handleDownloadKpacs}
+                              className="cursor-pointer"
+                              aria-label={t("downloadKpacsAria")}
+                            >
+                              {t("downloadKpacs")}
+                            </Button>
+                          </Paper>
+                        )}
+                      </Box>
+                      {buildJob.status === "complete" && buildJob.kpacs_error && (
+                        <Alert severity="warning" className="mt-2" role="alert">
+                          <Typography variant="body2" className="font-medium">
+                            {t("kpacsUnavailableTitle")}
+                          </Typography>
+                          <Typography variant="body2" className="mt-1">
+                            {buildJob.kpacs_error}
+                          </Typography>
+                        </Alert>
                       )}
                       <Typography
                         variant="body2"
