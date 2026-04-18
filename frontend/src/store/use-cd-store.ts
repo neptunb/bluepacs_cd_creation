@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { DicomNode, Patient, Study, Series, BuildJob } from "@/lib/types";
+import { writeLastSelectedDicomNodeAe } from "@/lib/persisted-dicom-node";
 
 export type RecentStudiesVariant = "latest10" | "lastWeek";
 
@@ -44,7 +45,12 @@ export const useCdStore = create<CdStore>((set, get) => ({
   nodes: [],
   selectedNode: null,
   setNodes: (nodes) => set({ nodes }),
-  setSelectedNode: (node) => set({ selectedNode: node }),
+  setSelectedNode: (node) => {
+    set({ selectedNode: node });
+    if (node?.ae_title) {
+      writeLastSelectedDicomNodeAe(node.ae_title);
+    }
+  },
 
   patients: [],
   selectedPatient: null,

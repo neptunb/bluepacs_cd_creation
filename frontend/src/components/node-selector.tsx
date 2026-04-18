@@ -20,6 +20,7 @@ import WifiIcon from "@mui/icons-material/Wifi";
 import WifiOffIcon from "@mui/icons-material/WifiOff";
 import HistoryIcon from "@mui/icons-material/History";
 import { useCdStore } from "@/store/use-cd-store";
+import { readLastSelectedDicomNodeAe } from "@/lib/persisted-dicom-node";
 import { format, subDays } from "date-fns";
 import { fetchNodes, echoNode, fetchRecentStudies } from "@/lib/api";
 import type { SelectChangeEvent } from "@mui/material";
@@ -49,8 +50,13 @@ const NodeSelector = () => {
         const data = await fetchNodes();
         setNodes(data);
         if (data.length > 0) {
-          setSelectedNode(data[0]);
+          const savedAe = readLastSelectedDicomNodeAe();
+          const fromStorage = savedAe
+            ? data.find((n) => n.ae_title === savedAe)
+            : undefined;
+          setSelectedNode(fromStorage ?? data[0]);
         } else {
+          setSelectedNode(null);
           setLoadError(t("errorNoNodes"));
         }
       } catch (err) {
