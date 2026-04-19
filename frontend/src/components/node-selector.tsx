@@ -25,6 +25,8 @@ import { format, subDays } from "date-fns";
 import { fetchNodes, echoNode, fetchRecentStudies } from "@/lib/api";
 import type { SelectChangeEvent } from "@mui/material";
 
+type RecentLoadKind = "latest10" | "lastWeek";
+
 const NodeSelector = () => {
   const t = useTranslations("nodeSelector");
   const {
@@ -39,7 +41,9 @@ const NodeSelector = () => {
   const [echoLoading, setEchoLoading] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadDone, setLoadDone] = useState(false);
-  const [recentLoading, setRecentLoading] = useState(false);
+  const [recentLoadingKind, setRecentLoadingKind] = useState<RecentLoadKind | null>(
+    null
+  );
   const [recentError, setRecentError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,7 +81,7 @@ const NodeSelector = () => {
   const handleLatestStudies = async () => {
     if (!selectedNode) return;
     setRecentError(null);
-    setRecentLoading(true);
+    setRecentLoadingKind("latest10");
     setStudiesLoading(true);
     try {
       const data = await fetchRecentStudies({
@@ -89,7 +93,7 @@ const NodeSelector = () => {
       console.error("Recent studies failed:", err);
       setRecentError(t("errorRecent"));
     } finally {
-      setRecentLoading(false);
+      setRecentLoadingKind(null);
       setStudiesLoading(false);
     }
   };
@@ -97,7 +101,7 @@ const NodeSelector = () => {
   const handleLastWeekStudies = async () => {
     if (!selectedNode) return;
     setRecentError(null);
-    setRecentLoading(true);
+    setRecentLoadingKind("lastWeek");
     setStudiesLoading(true);
     try {
       const end = new Date();
@@ -113,7 +117,7 @@ const NodeSelector = () => {
       console.error("Last week studies failed:", err);
       setRecentError(t("errorLastWeek"));
     } finally {
-      setRecentLoading(false);
+      setRecentLoadingKind(null);
       setStudiesLoading(false);
     }
   };
@@ -198,14 +202,14 @@ const NodeSelector = () => {
         variant="outlined"
         size="small"
         startIcon={
-          recentLoading ? (
+          recentLoadingKind === "latest10" ? (
             <CircularProgress color="inherit" size={16} />
           ) : (
             <HistoryIcon />
           )
         }
         onClick={handleLatestStudies}
-        disabled={!selectedNode || recentLoading}
+        disabled={!selectedNode || recentLoadingKind !== null}
         className="cursor-pointer"
         aria-label={t("latestTenAria")}
       >
@@ -215,14 +219,14 @@ const NodeSelector = () => {
         variant="outlined"
         size="small"
         startIcon={
-          recentLoading ? (
+          recentLoadingKind === "lastWeek" ? (
             <CircularProgress color="inherit" size={16} />
           ) : (
             <HistoryIcon />
           )
         }
         onClick={handleLastWeekStudies}
-        disabled={!selectedNode || recentLoading}
+        disabled={!selectedNode || recentLoadingKind !== null}
         className="cursor-pointer"
         aria-label={t("lastWeekAria")}
       >
