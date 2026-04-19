@@ -120,7 +120,7 @@ def _write_kpacs_autorun(staging_dir: str, launcher_exe: str) -> None:
 
 
 def _write_standalone_autorun(staging_dir: str, patient_name: str) -> None:
-    """AutoRun descriptor for the standalone viewer CD (Windows only — other OSes ignore it)."""
+    """AutoRun descriptor when windows_view.exe is on the disc (Windows only — other OSes ignore it)."""
     path = os.path.join(staging_dir, "autorun.inf")
     patient_name_ascii = _ascii_safe_text(patient_name)
     with open(path, "w", encoding="utf-8") as f:
@@ -135,9 +135,11 @@ def _write_patient_readme(
     staging_dir: str,
     patient_name: str,
     patient_id: str,
+    include_macos_launcher: bool = True,
+    include_windows_launcher: bool = True,
     include_linux_launcher: bool = False,
 ) -> None:
-    """Patient-facing README explaining how to open each platform's standalone launcher."""
+    """Patient-facing README explaining how to open each included standalone launcher."""
     readme = os.path.join(staging_dir, "README.txt")
     sep = "=" * 50
     with open(readme, "w", encoding="utf-8") as f:
@@ -147,28 +149,33 @@ def _write_patient_readme(
         f.write("that requires no installation.\n\n")
         f.write("HOW TO VIEW YOUR IMAGES\n")
         f.write("-" * 50 + "\n")
-        f.write("  Windows: Double-click  windows_view.exe\n")
-        f.write("  macOS:   Double-click  macos_view\n")
-        f.write("           (right-click > Open the first time)\n")
+        if include_windows_launcher:
+            f.write("  Windows: Double-click  windows_view.exe\n")
+        if include_macos_launcher:
+            f.write("  macOS:   Double-click  macos_view\n")
+            f.write("           (right-click > Open the first time)\n")
         if include_linux_launcher:
             f.write("  Linux:   Open a terminal here and run:  ./linux_view\n")
         f.write("\nA web browser window opens automatically showing your images.\n\n")
-        f.write("macOS security (Gatekeeper)\n")
-        f.write("-" * 50 + "\n")
-        f.write(
-            "If macOS says the app cannot be verified, that is normal for an\n"
-            "unsigned viewer. Try in order:\n"
-            "  1) Right-click macos_view, choose Open, then click Open again.\n"
-            "  2) System Settings > Privacy & Security > Open Anyway.\n"
-            "  3) Terminal: xattr -cr '/path/to/macos_view' then try again.\n"
-            "If TextEdit opens with random characters instead, run in Terminal:\n"
-            "  chmod +x macos_view && ./macos_view\n\n"
-        )
+        if include_macos_launcher:
+            f.write("macOS security (Gatekeeper)\n")
+            f.write("-" * 50 + "\n")
+            f.write(
+                "If macOS says the app cannot be verified, that is normal for an\n"
+                "unsigned viewer. Try in order:\n"
+                "  1) Right-click macos_view, choose Open, then click Open again.\n"
+                "  2) System Settings > Privacy & Security > Open Anyway.\n"
+                "  3) Terminal: xattr -cr '/path/to/macos_view' then try again.\n"
+                "If TextEdit opens with random characters instead, run in Terminal:\n"
+                "  chmod +x macos_view && ./macos_view\n\n"
+            )
         f.write("CONTENTS\n")
         f.write("-" * 50 + "\n")
         f.write("  study/            Your DICOM image files\n")
-        f.write("  windows_view.exe  Windows launcher (embedded OHIF viewer)\n")
-        f.write("  macos_view        macOS launcher (embedded OHIF viewer)\n")
+        if include_windows_launcher:
+            f.write("  windows_view.exe  Windows launcher (embedded OHIF viewer)\n")
+        if include_macos_launcher:
+            f.write("  macos_view        macOS launcher (embedded OHIF viewer)\n")
         if include_linux_launcher:
             f.write("  linux_view        Linux launcher (embedded OHIF viewer)\n")
         f.write("\n")
@@ -312,8 +319,8 @@ STANDALONE_LAUNCHERS: tuple[str, ...] = (
     "windows_view.exe",
 )
 
-# linux_view is optional on the disc; these two are always required when include_viewer is True.
-REQUIRED_STANDALONE_LAUNCHERS: tuple[str, ...] = ("macos_view", "windows_view.exe")
+MACOS_LAUNCHER = "macos_view"
+WINDOWS_LAUNCHER = "windows_view.exe"
 LINUX_LAUNCHER = "linux_view"
 
 
@@ -412,15 +419,17 @@ class CdBuilderService:
         patient_name: str,
         patient_id: str,
         include_viewer: bool = True,
+        include_macos_launcher: bool = True,
+        include_windows_launcher: bool = True,
         include_linux_launcher: bool = False,
     ) -> str:
         """Build the patient CD ISO with the standalone OHIF viewer.
 
         Layout on disc (Joliet names):
-            ./macos_view               standalone launcher (macOS)
+            ./macos_view               standalone launcher (macOS), optional
             ./linux_view               standalone launcher (Linux), optional
-            ./windows_view.exe         standalone launcher (Windows, autorun target)
-            ./autorun.inf              Windows AutoRun descriptor
+            ./windows_view.exe         standalone launcher (Windows), optional
+            ./autorun.inf              Windows AutoRun (only if windows_view.exe included)
             ./README.txt               patient-facing instructions
             ./study/<StudyInstanceUID>/<SeriesInstanceUID>/*.dcm
             (folder name matches ``OHIF_DISC_IMAGE_SUBDIR`` in ``constants.disc_layout``).
@@ -441,7 +450,19 @@ class CdBuilderService:
             )
 
         if include_viewer:
-            self._require_standalone_assets(include_linux_launcher=include_linux_launcher)
+            if not (
+                include_macos_launcher
+                or include_windows_launcher
+                or include_linux_launcher
+            ):
+                raise RuntimeError(
+                    "Select at least one viewer platform (macOS, Windows, and/or Linux)."
+                )
+            self._require_standalone_assets(
+                include_macos_launcher=include_macos_launcher,
+                include_windows_launcher=include_windows_launcher,
+                include_linux_launcher=include_linux_launcher,
+            )
 
         safe_name = "".join(
             c for c in _ascii_safe_text(patient_name) if c.isalnum() or c in " _-"
@@ -473,13 +494,19 @@ class CdBuilderService:
 
                 if include_viewer:
                     self._copy_standalone_launchers(
-                        staging, include_linux_launcher=include_linux_launcher
+                        staging,
+                        include_macos_launcher=include_macos_launcher,
+                        include_windows_launcher=include_windows_launcher,
+                        include_linux_launcher=include_linux_launcher,
                     )
-                    _write_standalone_autorun(staging, patient_name)
+                    if include_windows_launcher:
+                        _write_standalone_autorun(staging, patient_name)
                     _write_patient_readme(
                         staging,
                         patient_name,
                         patient_id,
+                        include_macos_launcher=include_macos_launcher,
+                        include_windows_launcher=include_windows_launcher,
                         include_linux_launcher=include_linux_launcher,
                     )
 
@@ -507,7 +534,12 @@ class CdBuilderService:
         await asyncio.to_thread(_assemble_and_write)
         return iso_path
 
-    def _require_standalone_assets(self, include_linux_launcher: bool = False) -> None:
+    def _require_standalone_assets(
+        self,
+        include_macos_launcher: bool = True,
+        include_windows_launcher: bool = True,
+        include_linux_launcher: bool = False,
+    ) -> None:
         path = self.standalone_viewer_path
         if not path or not os.path.isdir(path):
             raise RuntimeError(
@@ -515,7 +547,11 @@ class CdBuilderService:
                 f"{path or '(unset)'}. See cd_template/standalone/README.md and run "
                 "./scripts/sync_standalone.sh."
             )
-        required = list(REQUIRED_STANDALONE_LAUNCHERS)
+        required: list[str] = []
+        if include_macos_launcher:
+            required.append(MACOS_LAUNCHER)
+        if include_windows_launcher:
+            required.append(WINDOWS_LAUNCHER)
         if include_linux_launcher:
             required.append(LINUX_LAUNCHER)
         missing = [
@@ -529,9 +565,17 @@ class CdBuilderService:
             )
 
     def _copy_standalone_launchers(
-        self, staging_dir: str, include_linux_launcher: bool = False
+        self,
+        staging_dir: str,
+        include_macos_launcher: bool = True,
+        include_windows_launcher: bool = True,
+        include_linux_launcher: bool = False,
     ) -> None:
-        names = list(REQUIRED_STANDALONE_LAUNCHERS)
+        names: list[str] = []
+        if include_macos_launcher:
+            names.append(MACOS_LAUNCHER)
+        if include_windows_launcher:
+            names.append(WINDOWS_LAUNCHER)
         if include_linux_launcher:
             names.append(LINUX_LAUNCHER)
         for name in names:

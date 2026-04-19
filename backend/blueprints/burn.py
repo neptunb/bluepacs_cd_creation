@@ -338,6 +338,8 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             patient_name=burn_req.patient_name,
             patient_id=burn_req.patient_id,
             include_viewer=burn_req.include_viewer,
+            include_macos_launcher=burn_req.include_macos_launcher,
+            include_windows_launcher=burn_req.include_windows_launcher,
             include_linux_launcher=burn_req.include_linux_launcher,
         )
 

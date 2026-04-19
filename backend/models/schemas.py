@@ -70,11 +70,26 @@ class BurnRequest(BaseModel):
     series: Optional[list[str]] = None  # optional subset of SeriesInstanceUIDs
     expected_instances: Optional[int] = None
     include_viewer: bool = True
-    # When True, copy linux_view onto the OHIF disc (default off — optional).
+    include_macos_launcher: bool = True
+    include_windows_launcher: bool = True
     include_linux_launcher: bool = False
     include_kpacs: bool = True
     # OHIF step 1: retrieve into STUDY/ and offer ZIP only (no ISO; K-PACS unchanged).
     study_zip_only: bool = False
+
+    @model_validator(mode="after")
+    def require_platform_when_viewer_on_iso(self):
+        if self.study_zip_only or not self.include_viewer:
+            return self
+        if not (
+            self.include_macos_launcher
+            or self.include_windows_launcher
+            or self.include_linux_launcher
+        ):
+            raise ValueError(
+                "Select at least one viewer platform (macOS, Windows, and/or Linux)."
+            )
+        return self
 
 
 class BuildProgress(BaseModel):

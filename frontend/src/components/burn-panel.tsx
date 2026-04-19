@@ -32,6 +32,7 @@ import {
   getKpacsDownloadUrl,
   cleanupJob,
 } from "@/lib/api";
+import type { Theme } from "@mui/material/styles";
 
 const BUILD_STATUSES = [
   "queued",
@@ -45,6 +46,61 @@ type BuildStatusKey = (typeof BUILD_STATUSES)[number];
 
 const isBuildStatusKey = (s: string): s is BuildStatusKey =>
   (BUILD_STATUSES as readonly string[]).includes(s);
+
+/** Parantez içi MB: her durumda aynı soluk ton (seçim / disabled ile değişmez) */
+const viewerSizeNoteColor = (theme: Theme) =>
+  theme.palette.mode === "dark"
+    ? "rgba(255, 255, 255, 0.3)"
+    : "rgba(0, 0, 0, 0.3)";
+
+const viewerFormControlLabelSx = (theme: Theme) => ({
+  marginLeft: 0,
+  alignItems: "center",
+  "&.Mui-disabled": {
+    opacity: 1,
+  },
+  "& .MuiFormControlLabel-label": {
+    fontSize: "1.125rem",
+    lineHeight: 1.5,
+    color: theme.palette.text.primary,
+  },
+  "& .MuiCheckbox-root.Mui-disabled": {
+    opacity: 0.55,
+  },
+  "& .burn-panel-viewer-size-note, &.Mui-disabled .burn-panel-viewer-size-note": {
+    color: `${viewerSizeNoteColor(theme)} !important`,
+    opacity: "1 !important",
+  },
+});
+
+const viewerLabelWithSize = (title: string, sizeLabel: string) => (
+  <Box
+    component="span"
+    sx={{
+      display: "inline-flex",
+      flexWrap: "wrap",
+      alignItems: "baseline",
+      columnGap: 0.5,
+      rowGap: 0.25,
+    }}
+  >
+    <Box component="span" sx={{ color: "inherit" }}>
+      {title}
+    </Box>
+    <Box
+      component="span"
+      className="burn-panel-viewer-size-note"
+      sx={(theme) => ({
+        color: viewerSizeNoteColor(theme),
+        opacity: 1,
+        fontWeight: 400,
+        fontSize: "0.86em",
+      })}
+    >
+      {sizeLabel}
+    </Box>
+  </Box>
+);
 
 const BurnPanel = () => {
   const t = useTranslations("burnPanel");
@@ -61,6 +117,8 @@ const BurnPanel = () => {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeWindowsLauncher, setIncludeWindowsLauncher] = useState(true);
+  const [includeMacosLauncher, setIncludeMacosLauncher] = useState(true);
   const [includeLinuxLauncher, setIncludeLinuxLauncher] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -81,6 +139,9 @@ const BurnPanel = () => {
     selectedStudies.length > 0 &&
     Boolean(burnPatientId);
 
+  const anyIsoViewer =
+    includeWindowsLauncher || includeMacosLauncher || includeLinuxLauncher;
+
   const startBuild = useCallback(
     async (opts: { studyZipOnly: boolean }) => {
       if (!selectedNode || !burnPatientId) return;
@@ -89,6 +150,9 @@ const BurnPanel = () => {
       setDialogOpen(true);
 
       try {
+        const isoViewers =
+          !opts.studyZipOnly &&
+          (includeWindowsLauncher || includeMacosLauncher || includeLinuxLauncher);
         const { job_id } = await createCd({
           node_ae_title: selectedNode.ae_title,
           patient_id: burnPatientId,
@@ -96,10 +160,15 @@ const BurnPanel = () => {
           studies: selectedStudies,
           series: selectedSeries.length > 0 ? selectedSeries : undefined,
           expected_instances: expectedInstances > 0 ? expectedInstances : undefined,
-          include_viewer: true,
+          include_viewer: opts.studyZipOnly ? true : isoViewers,
+          include_macos_launcher:
+            !opts.studyZipOnly && includeMacosLauncher,
+          include_windows_launcher:
+            !opts.studyZipOnly && includeWindowsLauncher,
           include_linux_launcher:
             !opts.studyZipOnly && includeLinuxLauncher,
-          include_kpacs: !opts.studyZipOnly,
+          include_kpacs:
+            !opts.studyZipOnly && includeWindowsLauncher,
           study_zip_only: opts.studyZipOnly,
         });
 
@@ -151,6 +220,8 @@ const BurnPanel = () => {
       selectedSeries,
       setBuildJob,
       t,
+      includeWindowsLauncher,
+      includeMacosLauncher,
       includeLinuxLauncher,
     ]
   );
@@ -200,69 +271,187 @@ const BurnPanel = () => {
 
   return (
     <>
-      <Paper className="p-4">
-        <Typography variant="h6" className="mb-3 flex items-center gap-2">
-          <AlbumIcon /> {t("title")}
+      <Paper
+        className="p-4 md:p-5"
+        sx={{ color: "text.primary" }}
+      >
+        <Typography
+          variant="h6"
+          component="h2"
+          className="mb-4 md:mb-5 flex items-center gap-2"
+          sx={{
+            fontSize: { xs: "1.3rem", md: "1.4rem" },
+            fontWeight: 600,
+            lineHeight: 1.35,
+            color: "text.primary",
+          }}
+        >
+          <AlbumIcon
+            sx={{ fontSize: { xs: "1.5rem", md: "1.65rem" }, color: "text.primary" }}
+            aria-hidden
+          />{" "}
+          {t("title")}
         </Typography>
 
-        <Box className="flex items-center gap-3 flex-wrap">
-          <Typography variant="body2" className="text-gray-600">
-            {t("studiesSelected", { count: selectedStudies.length })}
-          </Typography>
-
-          <Button
-            variant="contained"
-            color="secondary"
-            startIcon={<FolderZipIcon />}
-            onClick={() => {
-              startBuild({ studyZipOnly: true }).catch(console.error);
-            }}
-            disabled={!canBuild}
-            className="cursor-pointer"
-            aria-label={t("downloadStudyZipAria")}
-          >
-            {t("downloadStudyZip")}
-          </Button>
-
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<LocalFireDepartmentIcon />}
-            onClick={() => {
-              startBuild({ studyZipOnly: false }).catch(console.error);
-            }}
-            disabled={!canBuild}
-            className="cursor-pointer"
-            aria-label={t("buildIsoAria")}
-          >
-            {t("buildIso")}
-          </Button>
-
-          <FormControlLabel
-            className="m-0"
-            control={
-              <Checkbox
-                size="small"
-                checked={includeLinuxLauncher}
-                onChange={(e) => setIncludeLinuxLauncher(e.target.checked)}
-                disabled={!canBuild}
-                aria-label={t("includeLinuxLauncherAria")}
+        <Box className="flex flex-col md:flex-row md:items-start md:gap-8 lg:gap-10 gap-6">
+          <Box className="flex-1 min-w-0 flex flex-col gap-4 md:gap-5">
+            <Box
+              role="group"
+              aria-label={t("viewerOptionsGroupAria")}
+              className="flex flex-col gap-2 pl-0.5"
+            >
+              <FormControlLabel
+                className="m-0 py-0.5"
+                sx={viewerFormControlLabelSx}
+                control={
+                  <Checkbox
+                    size="medium"
+                    checked={includeWindowsLauncher}
+                    onChange={(e) =>
+                      setIncludeWindowsLauncher(e.target.checked)
+                    }
+                    disabled={!canBuild}
+                    aria-label={t("viewerWindowsAria")}
+                  />
+                }
+                label={viewerLabelWithSize(
+                  t("viewerWindows"),
+                  t("viewerWindowsSize"),
+                )}
               />
-            }
-            label={
-              <Typography variant="body2" className="text-gray-700">
-                {t("includeLinuxLauncher")}
-              </Typography>
-            }
-          />
+              <FormControlLabel
+                className="m-0 py-0.5"
+                sx={viewerFormControlLabelSx}
+                control={
+                  <Checkbox
+                    size="medium"
+                    checked={includeMacosLauncher}
+                    onChange={(e) => setIncludeMacosLauncher(e.target.checked)}
+                    disabled={!canBuild}
+                    aria-label={t("viewerMacosAria")}
+                  />
+                }
+                label={viewerLabelWithSize(
+                  t("viewerMacos"),
+                  t("viewerMacosSize"),
+                )}
+              />
+              <FormControlLabel
+                className="m-0 py-0.5"
+                sx={viewerFormControlLabelSx}
+                control={
+                  <Checkbox
+                    size="medium"
+                    checked={includeLinuxLauncher}
+                    onChange={(e) => setIncludeLinuxLauncher(e.target.checked)}
+                    disabled={!canBuild}
+                    aria-label={t("viewerLinuxAria")}
+                  />
+                }
+                label={viewerLabelWithSize(
+                  t("viewerLinux"),
+                  t("viewerLinuxSize"),
+                )}
+              />
+            </Box>
 
-          <Typography variant="caption" className="text-gray-500 max-w-xl block">
-            {t("hintZip")}
-          </Typography>
+            <Box className="flex items-center gap-3 md:gap-4 flex-wrap">
+              <Typography
+                variant="body1"
+                sx={{
+                  fontSize: "1.125rem",
+                  lineHeight: 1.55,
+                  fontWeight: 600,
+                  color: "text.primary",
+                }}
+              >
+                {t("studiesSelected", { count: selectedStudies.length })}
+              </Typography>
+
+              <Button
+                variant="contained"
+                color="secondary"
+                size="large"
+                startIcon={<FolderZipIcon />}
+                onClick={() => {
+                  startBuild({ studyZipOnly: true }).catch(console.error);
+                }}
+                disabled={!canBuild}
+                className="cursor-pointer"
+                aria-label={t("downloadStudyZipAria")}
+                sx={{
+                  fontSize: "1.0625rem",
+                  py: 1.25,
+                  px: 2.5,
+                  minHeight: 48,
+                  textTransform: "none",
+                }}
+              >
+                {t("downloadStudyZip")}
+              </Button>
+
+              <Button
+                variant="contained"
+                color="primary"
+                size="large"
+                startIcon={<LocalFireDepartmentIcon />}
+                onClick={() => {
+                  startBuild({ studyZipOnly: false }).catch(console.error);
+                }}
+                disabled={!canBuild || !anyIsoViewer}
+                className="cursor-pointer"
+                aria-label={t("buildIsoAria")}
+                sx={{
+                  fontSize: "1.0625rem",
+                  py: 1.25,
+                  px: 2.5,
+                  minHeight: 48,
+                  textTransform: "none",
+                }}
+              >
+                {t("buildIso")}
+              </Button>
+            </Box>
+          </Box>
+
+          <Box
+            className="flex-1 min-w-0 md:max-w-[min(28rem,48%)] md:shrink-0"
+            component="aside"
+            aria-label={t("hintZipAria")}
+          >
+            <Box
+              sx={(theme) => ({
+                borderRadius: 2,
+                borderWidth: 2,
+                borderStyle: "solid",
+                borderColor: theme.palette.grey[600],
+                bgcolor: theme.palette.common.white,
+                color: theme.palette.grey[900],
+                px: 2.5,
+                py: 2,
+                boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
+              })}
+            >
+              <Typography
+                variant="body1"
+                component="p"
+                sx={(theme) => ({
+                  m: 0,
+                  fontSize: "1.0625rem",
+                  lineHeight: 1.75,
+                  fontWeight: 400,
+                  color: theme.palette.grey[900],
+                  whiteSpace: "pre-line",
+                })}
+              >
+                {t("hintZip")}
+              </Typography>
+            </Box>
+          </Box>
         </Box>
 
         {error && (
-          <Alert severity="error" className="mt-3" role="alert">
+          <Alert severity="error" className="mt-4" role="alert">
             {error}
           </Alert>
         )}
