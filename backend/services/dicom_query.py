@@ -120,6 +120,82 @@ class DicomQueryService:
 
         return await asyncio.get_event_loop().run_in_executor(None, _verify)
 
+    async def verify_detailed(self) -> dict:
+        """Like verify() but returns a dict with a human-readable `reason`
+        when the C-ECHO fails. Covers both association rejection/abort and a
+        non-success C-ECHO status code.
+        """
+        def _verify():
+            ae = self._make_ae()
+            try:
+                assoc = ae.associate(
+                    self.remote_host, self.remote_port, ae_title=self.remote_ae
+                )
+            except Exception as exc:
+                return {"reachable": False, "reason": f"associate raised: {exc}"}
+
+            if not assoc.is_established:
+                parts = []
+                if getattr(assoc, "is_rejected", False):
+                    parts.append("association rejected")
+                elif getattr(assoc, "is_aborted", False):
+                    parts.append("association aborted")
+                else:
+                    parts.append("association not established")
+
+                # pynetdicom stores the A-ASSOCIATE-RJ primitive on the
+                # acceptor; extract the AE Title / result / reason when
+                # available so the caller sees *why* the SCP refused us.
+                primitive = getattr(getattr(assoc, "acceptor", None), "primitive", None)
+                try:
+                    if primitive is not None:
+                        if getattr(primitive, "result", None) is not None:
+                            parts.append(f"result=0x{int(primitive.result):02X}")
+                        if getattr(primitive, "source", None) is not None:
+                            parts.append(f"source=0x{int(primitive.source):02X}")
+                        if getattr(primitive, "reason_diagnostic", None) is not None:
+                            parts.append(
+                                f"reason=0x{int(primitive.reason_diagnostic):02X}"
+                            )
+                except Exception:
+                    pass
+                # assoc.result is a short-hand that exists on some versions
+                try:
+                    if getattr(assoc, "result", None) is not None and not any(
+                        p.startswith("result=") for p in parts
+                    ):
+                        parts.append(f"result=0x{int(assoc.result):04X}")
+                except Exception:
+                    pass
+
+                logger.error(
+                    "verify_detailed: %s -> %s@%s:%d (%s)",
+                    self.local_ae, self.remote_ae, self.remote_host,
+                    self.remote_port, ", ".join(parts),
+                )
+                return {"reachable": False, "reason": "; ".join(parts)}
+
+            try:
+                status = assoc.send_c_echo()
+                if status is None:
+                    return {"reachable": False, "reason": "no C-ECHO response (timeout or connection lost)"}
+                code = int(getattr(status, "Status", -1))
+                if code == 0x0000:
+                    return {"reachable": True, "reason": None}
+                return {
+                    "reachable": False,
+                    "reason": f"C-ECHO failed (status=0x{code:04X})",
+                }
+            except Exception as exc:
+                return {"reachable": False, "reason": f"C-ECHO raised: {exc}"}
+            finally:
+                try:
+                    assoc.release()
+                except Exception:
+                    pass
+
+        return await asyncio.get_event_loop().run_in_executor(None, _verify)
+
     async def find_patients(
         self,
         patient_name: str = "",

@@ -100,12 +100,18 @@ async def echo_node_direct(request: Request):
     )
 
     try:
-        reachable = await service.verify()
-        error = None
+        detail = await service.verify_detailed()
+        reachable = bool(detail.get("reachable"))
+        error = None if reachable else (detail.get("reason") or "unreachable")
     except Exception as exc:
         logger.exception("echo-direct verify raised")
         reachable = False
-        error = str(exc)
+        error = f"verify raised: {exc}"
+
+    logger.info(
+        "echo-direct result: reachable=%s error=%s (local_ae=%s remote_ae=%s host=%s port=%s)",
+        reachable, error, local_ae, remote_ae, host, port_int,
+    )
 
     return json_response({
         "ae_title": ae_title,
