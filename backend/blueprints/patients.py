@@ -5,6 +5,7 @@ from sanic.request import Request
 
 from services.dicom_query import DicomQueryService
 from services.orthanc_api import OrthancApiService
+from services.ultramar_nodes import fetch_node
 from models.schemas import PatientQuery
 from config import config
 
@@ -40,7 +41,7 @@ async def search_patients(request: Request):
     except Exception as e:
         return json_response({"error": str(e)}, status=400)
 
-    node = config.get_node(query.node_ae_title)
+    node = await fetch_node(request, query.node_ae_title)
     if not node:
         return json_response(
             {"error": f"Unknown node: {query.node_ae_title}"}, status=404
@@ -71,7 +72,7 @@ async def get_patient_studies(request: Request, patient_id: str):
     if not ae_title:
         return json_response({"error": "node_ae_title is required"}, status=400)
 
-    node = config.get_node(ae_title)
+    node = await fetch_node(request, ae_title)
     if not node:
         return json_response({"error": f"Unknown node: {ae_title}"}, status=404)
 
@@ -105,7 +106,7 @@ async def test_cfind(request: Request):
     if not ae_title:
         return json_response({"error": "node_ae_title is required"}, status=400)
 
-    node = config.get_node(ae_title)
+    node = await fetch_node(request, ae_title)
     if not node:
         return json_response({"error": f"Unknown node: {ae_title}"}, status=404)
 

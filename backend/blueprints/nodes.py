@@ -1,72 +1,33 @@
+"""
+Read-only DICOM node API for the CD Creator UI.
+
+Node CRUD lives in Ultramar (uploader -> User Menu -> Settings -> DICOM
+Modalities / Pacs Yerleri). This blueprint only *reads* from Ultramar and
+exposes a C-ECHO helper for the selected node.
+"""
+
 from sanic import Blueprint, json as json_response
 from sanic.request import Request
 
-from services.dicom_query import DicomQueryService
 from config import config
+from services.dicom_query import DicomQueryService
+from services.ultramar_nodes import fetch_node, fetch_nodes
 
 nodes_bp = Blueprint("nodes")
 
 
 @nodes_bp.route("/", methods=["GET"])
 async def list_nodes(request: Request):
-    return json_response({"nodes": config.get_nodes()})
-
-
-@nodes_bp.route("/", methods=["POST"])
-async def add_node(request: Request):
-    body = request.json
-    required = ["ae_title", "host", "port"]
-    if not all(k in body for k in required):
-        return json_response(
-            {"error": f"Missing required fields: {required}"}, status=400
-        )
-
-    node = {
-        "ae_title": body["ae_title"].strip().upper(),
-        "host": body["host"].strip(),
-        "port": int(body["port"]),
-        "name": body.get("name", "").strip() or body["ae_title"],
-    }
-
-    try:
-        config.add_node(node)
-    except ValueError as e:
-        return json_response({"error": str(e)}, status=409)
-
-    return json_response({"node": node}, status=201)
-
-
-@nodes_bp.route("/<ae_title:str>", methods=["PUT"])
-async def update_node(request: Request, ae_title: str):
-    body = request.json
-    updates = {}
-    if "host" in body:
-        updates["host"] = body["host"].strip()
-    if "port" in body:
-        updates["port"] = int(body["port"])
-    if "name" in body:
-        updates["name"] = body["name"].strip()
-
-    try:
-        config.update_node(ae_title, updates)
-    except ValueError as e:
-        return json_response({"error": str(e)}, status=404)
-
-    return json_response({"status": "updated"})
-
-
-@nodes_bp.route("/<ae_title:str>", methods=["DELETE"])
-async def delete_node(request: Request, ae_title: str):
-    config.remove_node(ae_title)
-    return json_response({"status": "deleted"})
+    nodes = await fetch_nodes(request)
+    return json_response({"nodes": nodes})
 
 
 @nodes_bp.route("/echo", methods=["POST"])
 async def echo_node(request: Request):
-    body = request.json
+    body = request.json or {}
     ae_title = body.get("ae_title")
 
-    node = config.get_node(ae_title)
+    node = await fetch_node(request, ae_title)
     if not node:
         return json_response({"error": f"Unknown node: {ae_title}"}, status=404)
 

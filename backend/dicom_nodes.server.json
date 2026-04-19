@@ -2,20 +2,5 @@
   "local": {
     "ae_title": "BLUEPACS_CD",
     "port": 11113
-  },
-  "nodes": [
-    {
-      "ae_title": "ORTHANC",
-      "host": "pacs",
-      "port": 11112,
-      "name": "PACS (Orthanc)",
-      "orthanc_url": "http://pacs:8042"
-    },
-    {
-      "ae_title": "NEPTUNAE",
-      "host": "192.168.1.31",
-      "port": 104,
-      "name": "Horos (Local)"
-    }
-  ]
+  }
 }

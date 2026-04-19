@@ -50,7 +50,13 @@ opens the viewer in the default browser — no separate `viewer/` folder or
 - DICOM Query/Retrieve (C-FIND, C-MOVE, C-GET) via pynetdicom
 - ISO image creation using pycdlib (user downloads and burns locally) — DICOM files are placed under `study/<StudyInstanceUID>/...` alongside the three standalone viewer binaries
 - Optional **K-PACS Lite** second ISO: copies viewer binaries from [`cd_template/kpacs/`](cd_template/kpacs), copies the retrieved `DICOM/` tree into a K-PACS staging folder, and runs **DCMTK `dcmmkdir`** to create a root `DICOMDIR` (install DCMTK and ensure `dcmmkdir` is on `PATH`; override template path with `KPACS_TEMPLATE_PATH` if needed)
-- DICOM node (AE Title) management
+- DICOM node list is fetched from Ultramar's `dicom_modalities` table via
+  `/assets/cd/cd_nodes_list.php` (CRUD is performed in the Uploader →
+  *User Menu → Settings → Pacs Yerleri* page, guarded by
+  `PRIVILEGES::P_CAN_SETTINGS_DICOM_MODALITIES`). Set `ULTRAMAR_NODES_URL`
+  accordingly; when empty, `backend/dicom_nodes.sample.json` is used as a dev
+  fallback. Only the local BLUEPACS_CD listener (`ae_title` + `port`) is kept
+  in `backend/dicom_nodes.json`.
 
 ### 3. CD Template (`/cd_template`)
 - [`cd_template/standalone/`](cd_template/standalone) — the three standalone viewer binaries (`macos_view`, `linux_view`, `windows_view.exe`) plus a `study/README.txt` placeholder. Populate with `./scripts/sync_standalone.sh` — see [cd_template/standalone/README.md](cd_template/standalone/README.md). The binaries are git-ignored.

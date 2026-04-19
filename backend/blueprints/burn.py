@@ -13,6 +13,7 @@ from sanic.response import file_stream
 from constants.disc_layout import WORKSPACE_STUDY_ZIP_SUBDIR
 from models.schemas import BurnRequest
 from services.cd_builder import CdBuilderService
+from services.ultramar_nodes import fetch_node
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ async def create_cd(request: Request):
     except Exception as e:
         return json_response({"error": str(e)}, status=400)
 
-    node = config.get_node(burn_req.node_ae_title)
+    node = await fetch_node(request, burn_req.node_ae_title)
     if not node:
         return json_response(
             {"error": f"Unknown node: {burn_req.node_ae_title}"}, status=404

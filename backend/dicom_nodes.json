@@ -2,35 +2,5 @@
   "local": {
     "ae_title": "BLUEPACS_CD",
     "port": 11113
-  },
-  "nodes": [
-    {
-      "ae_title": "ORTHANC_ULTRAMAR",
-      "remote_dicom_ae": "ORTHANC",
-      "host": "pacs",
-      "port": 11112,
-      "name": "Orthanc (Ultramar docker)",
-      "orthanc_url": "http://pacs:8042",
-      "orthanc_user": "ultramar",
-      "orthanc_password": "ultramar"
-    },
-    {
-      "ae_title": "ORTHANC",
-      "host": "192.168.1.32",
-      "port": 11112,
-      "name": "PACS (Neptun @i13)"
-    },
-    {
-      "ae_title": "NeptunMacIso",
-      "host": "host.docker.internal",
-      "port": 11112,
-      "name": "Horos (Local)"
-    },
-    {
-      "ae_title": "tugras_iMac",
-      "host": "192.168.1.9",
-      "port": 11112,
-      "name": "Horos (Tuğra TACAL)"
-    }
-  ]
+  }
 }

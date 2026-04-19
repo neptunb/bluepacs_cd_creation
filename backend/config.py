@@ -6,17 +6,15 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
+# Holds only the local BLUEPACS_CD listener identity (ae_title + port).
+# The remote node list is no longer stored here — it lives in Ultramar's
+# `dicom_modalities` table and is fetched via `services.ultramar_nodes`.
 NODES_FILE = Path(__file__).parent / "dicom_nodes.json"
 
 
-def _load_nodes() -> dict:
+def _load_local() -> dict:
     with open(NODES_FILE, "r") as f:
         return json.load(f)
-
-
-def _save_nodes(data: dict) -> None:
-    with open(NODES_FILE, "w") as f:
-        json.dump(data, f, indent=2)
 
 
 class Config:
@@ -45,6 +43,18 @@ class Config:
     # Ultramar phpapi: session + P_CAN_USE_CD_CREATION (empty URL = skip auth for local dev)
     CD_AUTH_VALIDATE_URL: str = (os.getenv("CD_AUTH_VALIDATE_URL") or "").strip()
 
+    # Ultramar phpapi: returns DICOM nodes from the dicom_modalities DB table
+    # (empty URL = use ULTRAMAR_NODES_SAMPLE in dev mode).
+    ULTRAMAR_NODES_URL: str = (os.getenv("ULTRAMAR_NODES_URL") or "").strip()
+
+    # Optional: path to a local JSON fallback (list of nodes) used only when
+    # ULTRAMAR_NODES_URL is empty. Defaults to `backend/dicom_nodes.sample.json`
+    # if it exists; otherwise an empty list.
+    ULTRAMAR_NODES_SAMPLE: str = (
+        os.getenv("ULTRAMAR_NODES_SAMPLE")
+        or str(Path(__file__).parent / "dicom_nodes.sample.json")
+    ).strip()
+
     @staticmethod
     def orthanc_http_credentials(node: dict) -> tuple[str, str]:
         """HTTP Basic for Orthanc REST. Environment ORTHANC_USER / ORTHANC_PASSWORD override node JSON."""
@@ -58,52 +68,16 @@ class Config:
 
     @property
     def local_ae_title(self) -> str:
-        return _load_nodes()["local"]["ae_title"]
+        return _load_local()["local"]["ae_title"]
 
     @property
     def local_port(self) -> int:
-        return _load_nodes()["local"]["port"]
-
-    @staticmethod
-    def get_nodes() -> list[dict]:
-        return _load_nodes()["nodes"]
+        return _load_local()["local"]["port"]
 
     @staticmethod
     def dicom_remote_ae(node: dict) -> str:
         """Called AE for C-ECHO / C-FIND / C-MOVE when different from node id (e.g. ORTHANC)."""
         return (node.get("remote_dicom_ae") or node["ae_title"]).strip()
-
-    @staticmethod
-    def get_node(ae_title: str) -> dict | None:
-        for node in _load_nodes()["nodes"]:
-            if node["ae_title"] == ae_title:
-                return node
-        return None
-
-    @staticmethod
-    def add_node(node: dict) -> None:
-        data = _load_nodes()
-        for existing in data["nodes"]:
-            if existing["ae_title"] == node["ae_title"]:
-                raise ValueError(f"Node {node['ae_title']} already exists")
-        data["nodes"].append(node)
-        _save_nodes(data)
-
-    @staticmethod
-    def update_node(ae_title: str, updates: dict) -> None:
-        data = _load_nodes()
-        for i, existing in enumerate(data["nodes"]):
-            if existing["ae_title"] == ae_title:
-                data["nodes"][i] = {**existing, **updates}
-                _save_nodes(data)
-                return
-        raise ValueError(f"Node {ae_title} not found")
-
-    @staticmethod
-    def remove_node(ae_title: str) -> None:
-        data = _load_nodes()
-        data["nodes"] = [n for n in data["nodes"] if n["ae_title"] != ae_title]
-        _save_nodes(data)
 
 
 config = Config()
