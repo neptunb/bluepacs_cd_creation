@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 import aiohttp
@@ -12,6 +13,13 @@ from sanic.response import json as json_response
 from config import config
 
 logger = logging.getLogger(__name__)
+
+
+def _internal_token() -> str:
+    """Shared secret for server-to-server calls from the Ultramar phpapi
+    container. Bypasses the cookie check because those callers cannot forward
+    a browser session cookie. Only effective when the env var is non-empty."""
+    return (os.getenv("CD_INTERNAL_TOKEN") or "").strip()
 
 
 def _forwarded_host(request: Request) -> str:
@@ -65,6 +73,17 @@ async def cd_auth_middleware(request: Request):
     path = request.path
     if path == "/api/health" or path.startswith("/api/health"):
         return
+
+    expected = _internal_token()
+    if expected:
+        supplied = (
+            request.headers.get("x-internal-auth")
+            or request.headers.get("X-Internal-Auth")
+            or ""
+        ).strip()
+        if supplied and supplied == expected:
+            return  # trusted server-to-server caller (same Docker network)
+
     allowed, err = await validate_ultramar_cd_access(request)
     if not allowed:
         return json_response(
