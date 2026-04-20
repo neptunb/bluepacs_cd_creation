@@ -190,12 +190,25 @@ async def download_iso(request: Request, job_id: str):
     else:
         mime = "application/x-iso9660-image"
 
+    # Advertise the exact file size so the browser fetch() can show proportional
+    # download progress (without it, Sanic falls back to chunked transfer which
+    # omits Content-Length and forces us into an indeterminate progress bar).
+    try:
+        file_size = os.path.getsize(out_path)
+    except OSError:
+        file_size = None
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Accept-Ranges": "none",
+    }
+    if file_size is not None:
+        headers["Content-Length"] = str(file_size)
+
     return await file_stream(
         out_path,
         mime_type=mime,
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        },
+        headers=headers,
     )
 
 
@@ -215,12 +228,22 @@ async def download_kpacs_iso(request: Request, job_id: str):
 
     filename = job.get("kpacs_filename") or "kpacs_disc.iso"
 
+    try:
+        file_size = os.path.getsize(kpacs_path)
+    except OSError:
+        file_size = None
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Accept-Ranges": "none",
+    }
+    if file_size is not None:
+        headers["Content-Length"] = str(file_size)
+
     return await file_stream(
         kpacs_path,
         mime_type="application/x-iso9660-image",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        },
+        headers=headers,
     )
 
 

@@ -146,8 +146,14 @@ const BurnPanel = () => {
   const [includeMacosLauncher, setIncludeMacosLauncher] = useState(true);
   const [includeLinuxLauncher, setIncludeLinuxLauncher] = useState(false);
   const [downloadSpeedBps, setDownloadSpeedBps] = useState<number | null>(null);
+  const [downloadKind, setDownloadKind] = useState<"iso" | "kpacs" | null>(null);
+  const [downloadReceivedBytes, setDownloadReceivedBytes] = useState(0);
+  const [downloadTotalBytes, setDownloadTotalBytes] = useState<number | null>(null);
+  const [downloadSpeedPhaseBps, setDownloadSpeedPhaseBps] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const speedSampleRef = useRef<{ t: number; bytes: number } | null>(null);
+  const downloadAbortRef = useRef<AbortController | null>(null);
+  const downloadSpeedSampleRef = useRef<{ t: number; bytes: number } | null>(null);
 
   const firstSelectedStudy = studies.find((s) =>
     selectedStudies.includes(s.study_instance_uid)
@@ -256,17 +262,141 @@ const BurnPanel = () => {
     ]
   );
 
+  const parseFilenameFromDisposition = (
+    disposition: string | null,
+    fallback: string,
+  ): string => {
+    if (!disposition) return fallback;
+    const starMatch = /filename\*\s*=\s*(?:UTF-8'')?([^;\r\n"']+)/i.exec(
+      disposition,
+    );
+    if (starMatch?.[1]) {
+      try {
+        return decodeURIComponent(starMatch[1].trim());
+      } catch {
+        return starMatch[1].trim();
+      }
+    }
+    const plainMatch = /filename\s*=\s*"?([^";\r\n]+)"?/i.exec(disposition);
+    return plainMatch?.[1]?.trim() || fallback;
+  };
+
+  const streamDownloadFile = useCallback(
+    async (
+      url: string,
+      fallbackName: string,
+      kind: "iso" | "kpacs",
+    ): Promise<void> => {
+      downloadAbortRef.current?.abort();
+      const ac = new AbortController();
+      downloadAbortRef.current = ac;
+
+      setError(null);
+      setDownloadKind(kind);
+      setDownloadReceivedBytes(0);
+      setDownloadTotalBytes(null);
+      setDownloadSpeedPhaseBps(null);
+      downloadSpeedSampleRef.current = null;
+
+      try {
+        const resp = await fetch(url, {
+          credentials: "include",
+          signal: ac.signal,
+          cache: "no-store",
+        });
+        if (!resp.ok || !resp.body) {
+          throw new Error(`Download failed (HTTP ${resp.status})`);
+        }
+        const lenHeader = resp.headers.get("Content-Length");
+        const parsedLen = lenHeader ? Number.parseInt(lenHeader, 10) : Number.NaN;
+        const total =
+          Number.isFinite(parsedLen) && parsedLen > 0 ? parsedLen : null;
+        setDownloadTotalBytes(total);
+        const filename = parseFilenameFromDisposition(
+          resp.headers.get("Content-Disposition"),
+          fallbackName,
+        );
+
+        const reader = resp.body.getReader();
+        const chunks: BlobPart[] = [];
+        let received = 0;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          chunks.push(value);
+          received += value.byteLength;
+          setDownloadReceivedBytes(received);
+
+          const now = Date.now();
+          const prev = downloadSpeedSampleRef.current;
+          if (!prev) {
+            downloadSpeedSampleRef.current = { t: now, bytes: received };
+          } else {
+            const dt = (now - prev.t) / 1000;
+            if (dt >= 0.4) {
+              const instant = (received - prev.bytes) / dt;
+              setDownloadSpeedPhaseBps((current) =>
+                current === null ? instant : current * 0.5 + instant * 0.5,
+              );
+              downloadSpeedSampleRef.current = { t: now, bytes: received };
+            }
+          }
+        }
+
+        const mime =
+          resp.headers.get("Content-Type") || "application/octet-stream";
+        const blob = new Blob(chunks, { type: mime });
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = filename;
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        // Revoke after a beat so the browser can read the blob for "Save As".
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") return;
+        console.error("Streaming download failed:", err);
+        setError(t("errorDownload"));
+      } finally {
+        if (downloadAbortRef.current === ac) {
+          downloadAbortRef.current = null;
+        }
+        setDownloadKind(null);
+        setDownloadSpeedPhaseBps(null);
+        downloadSpeedSampleRef.current = null;
+      }
+    },
+    [t],
+  );
+
   const handleDownload = useCallback(() => {
     if (!buildJob?.job_id) return;
-    window.open(getDownloadUrl(buildJob.job_id), "_blank");
-  }, [buildJob]);
+    const fallback =
+      buildJob.filename ||
+      (buildJob.download_kind === "study_zip"
+        ? "dicom_images.zip"
+        : "dicom_images.iso");
+    void streamDownloadFile(getDownloadUrl(buildJob.job_id), fallback, "iso");
+  }, [buildJob, streamDownloadFile]);
 
   const handleDownloadKpacs = useCallback(() => {
     if (!buildJob?.job_id) return;
-    window.open(getKpacsDownloadUrl(buildJob.job_id), "_blank");
-  }, [buildJob]);
+    const fallback = buildJob.kpacs_filename || "kpacs_disc.iso";
+    void streamDownloadFile(
+      getKpacsDownloadUrl(buildJob.job_id),
+      fallback,
+      "kpacs",
+    );
+  }, [buildJob, streamDownloadFile]);
 
   const handleClose = useCallback(async () => {
+    downloadAbortRef.current?.abort();
+    downloadAbortRef.current = null;
     if (buildJob?.job_id) {
       try {
         await cleanupJob(buildJob.job_id);
@@ -278,11 +408,17 @@ const BurnPanel = () => {
     setBuildJob(null);
     speedSampleRef.current = null;
     setDownloadSpeedBps(null);
+    setDownloadKind(null);
+    setDownloadReceivedBytes(0);
+    setDownloadTotalBytes(null);
+    setDownloadSpeedPhaseBps(null);
+    downloadSpeedSampleRef.current = null;
   }, [buildJob, setBuildJob]);
 
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      downloadAbortRef.current?.abort();
     };
   }, []);
 
@@ -521,6 +657,7 @@ const BurnPanel = () => {
       <Dialog
         open={dialogOpen}
         onClose={() => {
+          if (downloadKind !== null) return;
           if (buildJob?.status === "complete" || buildJob?.status === "error") {
             handleClose();
           }
@@ -551,43 +688,101 @@ const BurnPanel = () => {
                 />
               </Box>
 
-              <LinearProgress
-                variant="determinate"
-                value={buildJob.progress * 100}
-                className="rounded"
-                aria-label={t("progressAria")}
-                aria-valuenow={buildJob.progress * 100}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              />
+              {(() => {
+                const isDownloading = downloadKind !== null;
+                const knownTotal =
+                  downloadTotalBytes !== null && downloadTotalBytes > 0;
+                const downloadRatio =
+                  isDownloading && knownTotal && downloadTotalBytes
+                    ? Math.min(1, downloadReceivedBytes / downloadTotalBytes)
+                    : null;
+                const barValue =
+                  isDownloading && downloadRatio !== null
+                    ? downloadRatio * 100
+                    : buildJob.progress * 100;
+                const useIndeterminate = isDownloading && downloadRatio === null;
+
+                return (
+                  <LinearProgress
+                    variant={useIndeterminate ? "indeterminate" : "determinate"}
+                    value={useIndeterminate ? undefined : barValue}
+                    className="rounded"
+                    aria-label={t("progressAria")}
+                    aria-valuenow={useIndeterminate ? undefined : barValue}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  />
+                );
+              })()}
 
               <Typography variant="body2" className="text-gray-600">
-                {buildJob.message}
+                {downloadKind !== null
+                  ? t(
+                      downloadKind === "kpacs"
+                        ? "downloadingKpacs"
+                        : "downloadingIso",
+                    )
+                  : buildJob.message}
               </Typography>
-              <Typography variant="body2" className="text-gray-700 font-medium">
-                {t("retrievedInstances", {
-                  count: buildJob.retrieved_instances,
-                })}
-              </Typography>
-              {(buildJob.status === "retrieving" ||
-                (buildJob.retrieved_bytes ?? 0) > 0) && (
+              {downloadKind === null && (
+                <Typography variant="body2" className="text-gray-700 font-medium">
+                  {t("retrievedInstances", {
+                    count: buildJob.retrieved_instances,
+                  })}
+                </Typography>
+              )}
+              {downloadKind !== null ? (
                 <Typography
                   variant="body2"
                   className="text-gray-700 font-medium"
                   aria-live="polite"
                 >
                   {(() => {
-                    const speedLabel = formatSpeed(downloadSpeedBps);
-                    const transferred = formatBytes(buildJob.retrieved_bytes ?? 0);
-                    if (buildJob.status === "retrieving" && speedLabel) {
-                      return t("transferSpeed", {
+                    const speedLabel = formatSpeed(downloadSpeedPhaseBps);
+                    const transferred = formatBytes(downloadReceivedBytes);
+                    const total =
+                      downloadTotalBytes !== null && downloadTotalBytes > 0
+                        ? formatBytes(downloadTotalBytes)
+                        : null;
+                    if (total && speedLabel) {
+                      return t("downloadSpeedWithTotal", {
                         speed: speedLabel,
                         transferred,
+                        total,
                       });
+                    }
+                    if (total) {
+                      return t("downloadTotal", { transferred, total });
+                    }
+                    if (speedLabel) {
+                      return t("transferSpeed", { speed: speedLabel, transferred });
                     }
                     return t("transferred", { transferred });
                   })()}
                 </Typography>
+              ) : (
+                (buildJob.status === "retrieving" ||
+                  (buildJob.retrieved_bytes ?? 0) > 0) && (
+                  <Typography
+                    variant="body2"
+                    className="text-gray-700 font-medium"
+                    aria-live="polite"
+                  >
+                    {(() => {
+                      const speedLabel = formatSpeed(downloadSpeedBps);
+                      const transferred = formatBytes(
+                        buildJob.retrieved_bytes ?? 0,
+                      );
+                      if (buildJob.status === "retrieving" && speedLabel) {
+                        return t("transferSpeed", {
+                          speed: speedLabel,
+                          transferred,
+                        });
+                      }
+                      return t("transferred", { transferred });
+                    })()}
+                  </Typography>
+                )
               )}
 
               {buildJob.download_ready && (
@@ -610,10 +805,12 @@ const BurnPanel = () => {
                         fullWidth
                         startIcon={<DownloadIcon />}
                         onClick={handleDownload}
+                        disabled={downloadKind !== null}
                         className="cursor-pointer"
                         aria-label={t("downloadZipAria")}
+                        aria-busy={downloadKind === "iso"}
                       >
-                        {t("downloadZip")}
+                        {downloadKind === "iso" ? t("downloadInProgress") : t("downloadZip")}
                       </Button>
                     </>
                   ) : (
@@ -660,10 +857,12 @@ const BurnPanel = () => {
                             fullWidth
                             startIcon={<DownloadIcon />}
                             onClick={handleDownload}
+                            disabled={downloadKind !== null}
                             className="cursor-pointer"
                             aria-label={t("downloadIsoAria")}
+                            aria-busy={downloadKind === "iso"}
                           >
-                            {t("downloadIso")}
+                            {downloadKind === "iso" ? t("downloadInProgress") : t("downloadIso")}
                           </Button>
                         </Paper>
                         {buildJob.kpacs_download_ready === true && (
@@ -704,10 +903,12 @@ const BurnPanel = () => {
                               fullWidth
                               startIcon={<DownloadIcon />}
                               onClick={handleDownloadKpacs}
+                              disabled={downloadKind !== null}
                               className="cursor-pointer"
                               aria-label={t("downloadKpacsAria")}
+                              aria-busy={downloadKind === "kpacs"}
                             >
-                              {t("downloadKpacs")}
+                              {downloadKind === "kpacs" ? t("downloadInProgress") : t("downloadKpacs")}
                             </Button>
                           </Paper>
                         )}
@@ -739,9 +940,10 @@ const BurnPanel = () => {
           <Button
             onClick={handleClose}
             disabled={
-              buildJob !== null &&
-              buildJob.status !== "complete" &&
-              buildJob.status !== "error"
+              downloadKind !== null ||
+              (buildJob !== null &&
+                buildJob.status !== "complete" &&
+                buildJob.status !== "error")
             }
           >
             {t("close")}
