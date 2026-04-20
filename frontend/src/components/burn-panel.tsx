@@ -150,6 +150,10 @@ const BurnPanel = () => {
   const [downloadReceivedBytes, setDownloadReceivedBytes] = useState(0);
   const [downloadTotalBytes, setDownloadTotalBytes] = useState<number | null>(null);
   const [downloadSpeedPhaseBps, setDownloadSpeedPhaseBps] = useState<number | null>(null);
+  const [completedDownloads, setCompletedDownloads] = useState<{
+    iso?: number;
+    kpacs?: number;
+  }>({});
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const speedSampleRef = useRef<{ t: number; bytes: number } | null>(null);
   const downloadAbortRef = useRef<AbortController | null>(null);
@@ -183,6 +187,7 @@ const BurnPanel = () => {
       setDialogOpen(true);
       speedSampleRef.current = null;
       setDownloadSpeedBps(null);
+      setCompletedDownloads({});
 
       try {
         const isoViewers =
@@ -358,6 +363,8 @@ const BurnPanel = () => {
         anchor.remove();
         // Revoke after a beat so the browser can read the blob for "Save As".
         setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+
+        setCompletedDownloads((prev) => ({ ...prev, [kind]: received }));
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") return;
         console.error("Streaming download failed:", err);
@@ -412,6 +419,7 @@ const BurnPanel = () => {
     setDownloadReceivedBytes(0);
     setDownloadTotalBytes(null);
     setDownloadSpeedPhaseBps(null);
+    setCompletedDownloads({});
     downloadSpeedSampleRef.current = null;
   }, [buildJob, setBuildJob]);
 
@@ -724,14 +732,34 @@ const BurnPanel = () => {
                     )
                   : buildJob.message}
               </Typography>
-              {downloadKind === null && (
-                <Typography variant="body2" className="text-gray-700 font-medium">
-                  {t("retrievedInstances", {
-                    count: buildJob.retrieved_instances,
-                  })}
+              <Typography variant="body2" className="text-gray-700 font-medium">
+                {t("retrievedInstances", {
+                  count: buildJob.retrieved_instances,
+                })}
+              </Typography>
+              {(buildJob.status === "retrieving" ||
+                (buildJob.retrieved_bytes ?? 0) > 0) && (
+                <Typography
+                  variant="body2"
+                  className="text-gray-700 font-medium"
+                  aria-live="polite"
+                >
+                  {(() => {
+                    const speedLabel = formatSpeed(downloadSpeedBps);
+                    const transferred = formatBytes(
+                      buildJob.retrieved_bytes ?? 0,
+                    );
+                    if (buildJob.status === "retrieving" && speedLabel) {
+                      return t("transferSpeed", {
+                        speed: speedLabel,
+                        transferred,
+                      });
+                    }
+                    return t("transferred", { transferred });
+                  })()}
                 </Typography>
               )}
-              {downloadKind !== null ? (
+              {downloadKind !== null && (
                 <Typography
                   variant="body2"
                   className="text-gray-700 font-medium"
@@ -755,35 +783,38 @@ const BurnPanel = () => {
                       return t("downloadTotal", { transferred, total });
                     }
                     if (speedLabel) {
-                      return t("transferSpeed", { speed: speedLabel, transferred });
+                      return t("downloadSpeed", { speed: speedLabel, transferred });
                     }
-                    return t("transferred", { transferred });
+                    return t("downloaded", { transferred });
                   })()}
                 </Typography>
-              ) : (
-                (buildJob.status === "retrieving" ||
-                  (buildJob.retrieved_bytes ?? 0) > 0) && (
-                  <Typography
-                    variant="body2"
-                    className="text-gray-700 font-medium"
-                    aria-live="polite"
-                  >
-                    {(() => {
-                      const speedLabel = formatSpeed(downloadSpeedBps);
-                      const transferred = formatBytes(
-                        buildJob.retrieved_bytes ?? 0,
-                      );
-                      if (buildJob.status === "retrieving" && speedLabel) {
-                        return t("transferSpeed", {
-                          speed: speedLabel,
-                          transferred,
-                        });
-                      }
-                      return t("transferred", { transferred });
-                    })()}
-                  </Typography>
-                )
               )}
+              {downloadKind === null &&
+                (completedDownloads.iso !== undefined ||
+                  completedDownloads.kpacs !== undefined) && (
+                  <Box className="flex flex-col gap-0.5">
+                    {completedDownloads.iso !== undefined && (
+                      <Typography
+                        variant="body2"
+                        className="text-gray-700 font-medium"
+                      >
+                        {t("downloadedIsoSize", {
+                          transferred: formatBytes(completedDownloads.iso),
+                        })}
+                      </Typography>
+                    )}
+                    {completedDownloads.kpacs !== undefined && (
+                      <Typography
+                        variant="body2"
+                        className="text-gray-700 font-medium"
+                      >
+                        {t("downloadedKpacsSize", {
+                          transferred: formatBytes(completedDownloads.kpacs),
+                        })}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
 
               {buildJob.download_ready && (
                 <>
@@ -803,14 +834,27 @@ const BurnPanel = () => {
                         color="success"
                         size="large"
                         fullWidth
-                        startIcon={<DownloadIcon />}
+                        startIcon={
+                          completedDownloads.iso !== undefined ? (
+                            <CheckCircleIcon />
+                          ) : (
+                            <DownloadIcon />
+                          )
+                        }
                         onClick={handleDownload}
-                        disabled={downloadKind !== null}
+                        disabled={
+                          downloadKind !== null ||
+                          completedDownloads.iso !== undefined
+                        }
                         className="cursor-pointer"
                         aria-label={t("downloadZipAria")}
                         aria-busy={downloadKind === "iso"}
                       >
-                        {downloadKind === "iso" ? t("downloadInProgress") : t("downloadZip")}
+                        {completedDownloads.iso !== undefined
+                          ? t("downloadCompleted")
+                          : downloadKind === "iso"
+                            ? t("downloadInProgress")
+                            : t("downloadZip")}
                       </Button>
                     </>
                   ) : (
@@ -855,14 +899,27 @@ const BurnPanel = () => {
                             color="success"
                             size="large"
                             fullWidth
-                            startIcon={<DownloadIcon />}
+                            startIcon={
+                              completedDownloads.iso !== undefined ? (
+                                <CheckCircleIcon />
+                              ) : (
+                                <DownloadIcon />
+                              )
+                            }
                             onClick={handleDownload}
-                            disabled={downloadKind !== null}
+                            disabled={
+                              downloadKind !== null ||
+                              completedDownloads.iso !== undefined
+                            }
                             className="cursor-pointer"
                             aria-label={t("downloadIsoAria")}
                             aria-busy={downloadKind === "iso"}
                           >
-                            {downloadKind === "iso" ? t("downloadInProgress") : t("downloadIso")}
+                            {completedDownloads.iso !== undefined
+                              ? t("downloadCompleted")
+                              : downloadKind === "iso"
+                                ? t("downloadInProgress")
+                                : t("downloadIso")}
                           </Button>
                         </Paper>
                         {buildJob.kpacs_download_ready === true && (
@@ -901,14 +958,27 @@ const BurnPanel = () => {
                               color="primary"
                               size="large"
                               fullWidth
-                              startIcon={<DownloadIcon />}
+                              startIcon={
+                                completedDownloads.kpacs !== undefined ? (
+                                  <CheckCircleIcon />
+                                ) : (
+                                  <DownloadIcon />
+                                )
+                              }
                               onClick={handleDownloadKpacs}
-                              disabled={downloadKind !== null}
+                              disabled={
+                                downloadKind !== null ||
+                                completedDownloads.kpacs !== undefined
+                              }
                               className="cursor-pointer"
                               aria-label={t("downloadKpacsAria")}
                               aria-busy={downloadKind === "kpacs"}
                             >
-                              {downloadKind === "kpacs" ? t("downloadInProgress") : t("downloadKpacs")}
+                              {completedDownloads.kpacs !== undefined
+                                ? t("downloadCompleted")
+                                : downloadKind === "kpacs"
+                                  ? t("downloadInProgress")
+                                  : t("downloadKpacs")}
                             </Button>
                           </Paper>
                         )}
