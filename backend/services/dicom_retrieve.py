@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import aiohttp
+import pydicom
 from pynetdicom import AE, evt, StoragePresentationContexts, build_role
 from pynetdicom.sop_class import (
     PatientRootQueryRetrieveInformationModelGet,
@@ -24,6 +25,55 @@ from pydicom.uid import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_instance_number(value) -> Optional[int]:
+    """Return a non-negative int from a DICOM InstanceNumber tag, or ``None`` if unparsable."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        n = int(s) if s.lstrip("-").isdigit() else int(float(s))
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
+def _instance_filename(
+    series_dir: str,
+    instance_number,
+    sop_uid: str,
+    fallback_counter: int,
+) -> str:
+    """Classic DICOM-CD naming: ``IMG{InstanceNumber:05d}.dcm`` inside each series folder.
+
+    Produces short, distinguishable filenames (``IMG00001.dcm``, ``IMG00002.dcm`` …) that
+    sort naturally and match what patients/operators expect from vendor PACS discs, in
+    place of the previous full SOPInstanceUID naming which produced visually identical
+    long-UID filenames in Finder/Explorer. Falls back to a SOP-UID tail for missing or
+    colliding InstanceNumbers so uniqueness is always preserved.
+    """
+    num = _coerce_instance_number(instance_number)
+    sop_tail = "".join(ch for ch in (sop_uid or "") if ch.isalnum())[-8:]
+
+    if num is not None:
+        base = f"IMG{num:05d}"
+        candidate = f"{base}.dcm"
+        if not os.path.exists(os.path.join(series_dir, candidate)):
+            return candidate
+        suffix = sop_tail or f"{fallback_counter:05d}"
+        candidate = f"{base}_{suffix}.dcm"
+        if not os.path.exists(os.path.join(series_dir, candidate)):
+            return candidate
+
+    if sop_tail:
+        candidate = f"IMG_{sop_tail}.dcm"
+        if not os.path.exists(os.path.join(series_dir, candidate)):
+            return candidate
+
+    return f"IMG_{fallback_counter:06d}.dcm"
 
 
 class DicomRetrieveService:
@@ -86,7 +136,13 @@ class DicomRetrieveService:
                 series_dir = os.path.join(output_dir, series_uid)
                 os.makedirs(series_dir, exist_ok=True)
 
-                filepath = os.path.join(series_dir, f"{sop_uid}.dcm")
+                filename = _instance_filename(
+                    series_dir,
+                    getattr(ds, "InstanceNumber", None),
+                    sop_uid,
+                    file_count + 1,
+                )
+                filepath = os.path.join(series_dir, filename)
                 ds.save_as(filepath, write_like_original=False)
                 file_count += 1
                 try:
@@ -396,7 +452,31 @@ class DicomRetrieveService:
                         data = await file_resp.read()
                     if not data:
                         continue
-                    filepath = os.path.join(series_dir, f"{iid}.dcm")
+
+                    instance_number = None
+                    sop_uid = str(iid)
+                    try:
+                        header_ds = pydicom.dcmread(
+                            io.BytesIO(data),
+                            stop_before_pixels=True,
+                            force=True,
+                        )
+                        instance_number = getattr(header_ds, "InstanceNumber", None)
+                        sop_uid = str(getattr(header_ds, "SOPInstanceUID", iid))
+                    except Exception as parse_exc:
+                        logger.debug(
+                            "Orthanc retrieve: could not parse header for %s: %s",
+                            iid,
+                            parse_exc,
+                        )
+
+                    filename = _instance_filename(
+                        series_dir,
+                        instance_number,
+                        sop_uid,
+                        file_count + 1,
+                    )
+                    filepath = os.path.join(series_dir, filename)
                     with open(filepath, "wb") as f:
                         f.write(data)
                     file_count += 1
