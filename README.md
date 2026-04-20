@@ -123,6 +123,18 @@ make -C standalone all
 
 See `backend/.env.example` for configuration options including DICOM node settings and paths.
 
+## Deployments
+
+- **Development / single-box (stand-alone)**: `docker-compose.yml` at the
+  repo root.
+- **Integrated with the rest of the BluePACS stack** (rproxy, phpapi, pacs,
+  uploader, …): the `cd-backend` and `cd-frontend` services live in the
+  sibling [`Ultramar`](../Ultramar) repo — see
+  [`Ultramar/docker-compose.yml`](../Ultramar/docker-compose.yml) (same file
+  also defines optional `cd-caddy` for `https://cd.bluepacs.com` on the LAN;
+  see [`Ultramar/Onsite-Readme.md`](../Ultramar/Onsite-Readme.md)). Production
+  server layout uses `docker-compose-server.yml`.
+
 ## License
 See [LICENSE](./LICENSE) file.
 
