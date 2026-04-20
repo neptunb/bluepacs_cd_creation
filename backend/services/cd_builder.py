@@ -359,7 +359,7 @@ class CdBuilderService:
         self,
         study_uids: list[str],
         series_filter: Optional[list[str]] = None,
-        on_instance_retrieved: Optional[Callable[[int], None]] = None,
+        on_instance_retrieved: Optional[Callable[[int, int], None]] = None,
         images_subdir: str = WORKSPACE_DICOM_SUBDIR,
     ) -> str:
         """Retrieve instances under ``work_dir/<images_subdir>/<StudyInstanceUID>/...``.
@@ -378,26 +378,37 @@ class CdBuilderService:
         root_dir = os.path.join(work_dir, images_subdir)
         os.makedirs(root_dir, exist_ok=True)
         total_files = 0
+        total_bytes = 0
         per_study_counts: dict[str, int] = {}
 
         for study_uid in study_uids:
             output = os.path.join(root_dir, study_uid)
             prior_total = total_files
+            prior_bytes = total_bytes
+            last_bytes_seen = 0
+
+            def _on_retrieved(
+                study_count: int,
+                study_bytes: int,
+                base_files: int = prior_total,
+                base_bytes: int = prior_bytes,
+            ) -> None:
+                nonlocal last_bytes_seen
+                last_bytes_seen = study_bytes
+                if on_instance_retrieved:
+                    on_instance_retrieved(
+                        base_files + study_count,
+                        base_bytes + study_bytes,
+                    )
+
             count = await self.retriever.retrieve_study(
                 study_instance_uid=study_uid,
                 output_dir=output,
                 series_filter=series_filter,
-                on_instance_retrieved=(
-                    (
-                        lambda study_count, base=prior_total: on_instance_retrieved(
-                            base + study_count
-                        )
-                    )
-                    if on_instance_retrieved
-                    else None
-                ),
+                on_instance_retrieved=_on_retrieved,
             )
             total_files += count
+            total_bytes += last_bytes_seen
             per_study_counts[study_uid] = count
             logger.info("Retrieved %d files for study %s", count, study_uid)
 

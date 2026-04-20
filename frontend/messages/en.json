@@ -120,6 +120,8 @@
     "statusLabel": "Status:",
     "progressAria": "Build progress",
     "retrievedInstances": "Retrieved instances: {count}",
+    "transferSpeed": "Speed: {speed} — {transferred} downloaded",
+    "transferred": "Downloaded: {transferred}",
     "zipReadyBody": "ZIP contains a STUDY/ tree with the same instances that were retrieved from the PACS (one folder per study UID).",
     "downloadZip": "Download ZIP to My PC",
     "downloadZipAria": "Download STUDY folder ZIP file",

@@ -73,6 +73,31 @@ const viewerFormControlLabelSx = (theme: Theme) => ({
   },
 });
 
+const decimalsForValue = (value: number): number => {
+  if (value >= 100) return 0;
+  if (value >= 10) return 1;
+  return 2;
+};
+
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(decimalsForValue(value))} ${units[i]}`;
+};
+
+const formatSpeed = (bytesPerSecond: number | null): string | null => {
+  if (bytesPerSecond === null || !Number.isFinite(bytesPerSecond) || bytesPerSecond < 1) {
+    return null;
+  }
+  return `${formatBytes(bytesPerSecond)}/s`;
+};
+
 const viewerLabelWithSize = (title: string, sizeLabel: string) => (
   <Box
     component="span"
@@ -120,7 +145,9 @@ const BurnPanel = () => {
   const [includeWindowsLauncher, setIncludeWindowsLauncher] = useState(true);
   const [includeMacosLauncher, setIncludeMacosLauncher] = useState(true);
   const [includeLinuxLauncher, setIncludeLinuxLauncher] = useState(false);
+  const [downloadSpeedBps, setDownloadSpeedBps] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speedSampleRef = useRef<{ t: number; bytes: number } | null>(null);
 
   const firstSelectedStudy = studies.find((s) =>
     selectedStudies.includes(s.study_instance_uid)
@@ -148,6 +175,8 @@ const BurnPanel = () => {
 
       setError(null);
       setDialogOpen(true);
+      speedSampleRef.current = null;
+      setDownloadSpeedBps(null);
 
       try {
         const isoViewers =
@@ -184,6 +213,7 @@ const BurnPanel = () => {
           kpacs_download_ready: false,
           kpacs_error: null,
           retrieved_instances: 0,
+          retrieved_bytes: 0,
           expected_instances: expectedInstances > 0 ? expectedInstances : null,
         });
 
@@ -246,6 +276,8 @@ const BurnPanel = () => {
     }
     setDialogOpen(false);
     setBuildJob(null);
+    speedSampleRef.current = null;
+    setDownloadSpeedBps(null);
   }, [buildJob, setBuildJob]);
 
   useEffect(() => {
@@ -253,6 +285,35 @@ const BurnPanel = () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!buildJob) {
+      speedSampleRef.current = null;
+      setDownloadSpeedBps(null);
+      return;
+    }
+    if (buildJob.status !== "retrieving") {
+      speedSampleRef.current = null;
+      setDownloadSpeedBps(null);
+      return;
+    }
+    const bytes = buildJob.retrieved_bytes ?? 0;
+    const now = Date.now();
+    const prev = speedSampleRef.current;
+    if (prev && now > prev.t) {
+      const deltaSeconds = (now - prev.t) / 1000;
+      const deltaBytes = bytes - prev.bytes;
+      if (deltaSeconds >= 0.25 && deltaBytes >= 0) {
+        const instant = deltaBytes / deltaSeconds;
+        setDownloadSpeedBps((current) =>
+          current === null ? instant : current * 0.5 + instant * 0.5
+        );
+        speedSampleRef.current = { t: now, bytes };
+      }
+    } else {
+      speedSampleRef.current = { t: now, bytes };
+    }
+  }, [buildJob]);
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -508,6 +569,26 @@ const BurnPanel = () => {
                   count: buildJob.retrieved_instances,
                 })}
               </Typography>
+              {(buildJob.status === "retrieving" ||
+                (buildJob.retrieved_bytes ?? 0) > 0) && (
+                <Typography
+                  variant="body2"
+                  className="text-gray-700 font-medium"
+                  aria-live="polite"
+                >
+                  {(() => {
+                    const speedLabel = formatSpeed(downloadSpeedBps);
+                    const transferred = formatBytes(buildJob.retrieved_bytes ?? 0);
+                    if (buildJob.status === "retrieving" && speedLabel) {
+                      return t("transferSpeed", {
+                        speed: speedLabel,
+                        transferred,
+                      });
+                    }
+                    return t("transferred", { transferred });
+                  })()}
+                </Typography>
+              )}
 
               {buildJob.download_ready && (
                 <>

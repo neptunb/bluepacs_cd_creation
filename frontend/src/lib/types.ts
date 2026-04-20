@@ -52,5 +52,6 @@ export interface BuildJob {
   kpacs_download_ready: boolean;
   kpacs_error: string | null;
   retrieved_instances: number;
+  retrieved_bytes: number;
   expected_instances: number | null;
 }

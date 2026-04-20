@@ -120,6 +120,8 @@
     "statusLabel": "Durum:",
     "progressAria": "Oluşturma ilerlemesi",
     "retrievedInstances": "Alınan örnekler: {count}",
+    "transferSpeed": "Hız: {speed} — {transferred} indirildi",
+    "transferred": "İndirilen: {transferred}",
     "zipReadyBody": "ZIP, PACS’tan alınan aynı örnekleri içeren bir STUDY/ ağacı içerir (inceleme UID başına bir klasör).",
     "downloadZip": "ZIP’i bilgisayarıma indir",
     "downloadZipAria": "STUDY klasörü ZIP dosyasını indir",

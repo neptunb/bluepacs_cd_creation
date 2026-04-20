@@ -130,6 +130,7 @@ async def create_cd(request: Request):
         "kpacs_filename": None,
         "kpacs_error": None,
         "retrieved_instances": 0,
+        "retrieved_bytes": 0,
         "expected_instances": burn_req.expected_instances,
         "download_kind": "study_zip" if burn_req.study_zip_only else "ohif_iso",
     }
@@ -162,6 +163,7 @@ async def get_status(request: Request, job_id: str):
         "kpacs_download_ready": job["status"] == "complete" and bool(kpacs_path),
         "kpacs_error": job.get("kpacs_error"),
         "retrieved_instances": job.get("retrieved_instances", 0),
+        "retrieved_bytes": job.get("retrieved_bytes", 0),
         "expected_instances": job.get("expected_instances"),
         "download_kind": job.get("download_kind", "ohif_iso"),
     })
@@ -272,9 +274,10 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
 
         expected_instances = burn_req.expected_instances or 0
 
-        def on_instance_retrieved(total_retrieved: int) -> None:
+        def on_instance_retrieved(total_retrieved: int, total_bytes: int) -> None:
             with job_lock:
                 job["retrieved_instances"] = total_retrieved
+                job["retrieved_bytes"] = total_bytes
                 if expected_instances > 0:
                     ratio = min(total_retrieved / expected_instances, 1.0)
                     retrieval_progress = 0.05 + (0.75 * ratio)

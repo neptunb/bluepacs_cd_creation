@@ -57,7 +57,7 @@ class DicomRetrieveService:
         study_instance_uid: str,
         output_dir: str,
         series_filter: Optional[list[str]] = None,
-        on_instance_retrieved: Optional[Callable[[int], None]] = None,
+        on_instance_retrieved: Optional[Callable[[int, int], None]] = None,
     ) -> int:
         if self.orthanc_url:
             return await self._retrieve_study_via_orthanc(
@@ -70,9 +70,10 @@ class DicomRetrieveService:
         def _retrieve():
             os.makedirs(output_dir, exist_ok=True)
             file_count = 0
+            byte_count = 0
 
             def handle_store(event):
-                nonlocal file_count
+                nonlocal file_count, byte_count
                 ds = event.dataset
                 ds.file_meta = event.file_meta
 
@@ -88,8 +89,12 @@ class DicomRetrieveService:
                 filepath = os.path.join(series_dir, f"{sop_uid}.dcm")
                 ds.save_as(filepath, write_like_original=False)
                 file_count += 1
+                try:
+                    byte_count += os.path.getsize(filepath)
+                except OSError:
+                    pass
                 if on_instance_retrieved:
-                    on_instance_retrieved(file_count)
+                    on_instance_retrieved(file_count, byte_count)
                 return 0x0000
 
             handlers = [(evt.EVT_C_STORE, handle_store)]
@@ -260,11 +265,12 @@ class DicomRetrieveService:
         study_instance_uid: str,
         output_dir: str,
         series_filter: Optional[list[str]] = None,
-        on_instance_retrieved: Optional[Callable[[int], None]] = None,
+        on_instance_retrieved: Optional[Callable[[int, int], None]] = None,
     ) -> int:
         os.makedirs(output_dir, exist_ok=True)
         timeout = aiohttp.ClientTimeout(total=120)
         file_count = 0
+        byte_count = 0
         diagnostics: dict[str, int] = {
             "series_total": 0,
             "series_after_filter": 0,
@@ -394,9 +400,10 @@ class DicomRetrieveService:
                     with open(filepath, "wb") as f:
                         f.write(data)
                     file_count += 1
+                    byte_count += len(data)
                     diagnostics["instances_downloaded"] += 1
                     if on_instance_retrieved:
-                        on_instance_retrieved(file_count)
+                        on_instance_retrieved(file_count, byte_count)
 
             if file_count == 0:
                 # Final fallback: download whole study archive from Orthanc and extract.
@@ -412,11 +419,17 @@ class DicomRetrieveService:
                                     for fn in files:
                                         fp = os.path.join(root, fn)
                                         try:
-                                            if os.path.getsize(fp) > 0:
-                                                file_count += 1
-                                                diagnostics["instances_downloaded"] += 1
+                                            size = os.path.getsize(fp)
                                         except OSError:
                                             continue
+                                        if size > 0:
+                                            file_count += 1
+                                            byte_count += size
+                                            diagnostics["instances_downloaded"] += 1
+                                            if on_instance_retrieved:
+                                                on_instance_retrieved(
+                                                    file_count, byte_count
+                                                )
                             except Exception as e:
                                 logger.warning(
                                     "Orthanc retrieve: archive extract failed for %s: %s",
