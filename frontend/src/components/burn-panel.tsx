@@ -32,6 +32,7 @@ import {
   getKpacsDownloadUrl,
   cleanupJob,
 } from "@/lib/api";
+import type { Study, Series } from "@/lib/types";
 import type { Theme } from "@mui/material/styles";
 
 const BUILD_STATUSES = [
@@ -98,6 +99,37 @@ const formatSpeed = (bytesPerSecond: number | null): string | null => {
   return `${formatBytes(bytesPerSecond)}/s`;
 };
 
+/** Prefer series-level instance totals when the study-level C-FIND count is missing or too low (some PACS). */
+const expectedInstancesForSelection = (
+  selectedStudyUids: string[],
+  studies: Study[],
+  seriesMap: Record<string, Series[]>,
+  selectedSeriesUids: string[],
+): number => {
+  return selectedStudyUids.reduce((sum, studyUid) => {
+    const study = studies.find((s) => s.study_instance_uid === studyUid);
+    const fromStudy = study?.number_of_instances ?? 0;
+    const seriesList = seriesMap[studyUid];
+    let fromSeries = 0;
+    if (seriesList?.length) {
+      const rows =
+        selectedSeriesUids.length > 0
+          ? seriesList.filter((s) =>
+              selectedSeriesUids.includes(s.series_instance_uid),
+            )
+          : seriesList;
+      fromSeries = rows.reduce((acc, s) => acc + (s.number_of_instances ?? 0), 0);
+    }
+    const part =
+      fromSeries > fromStudy
+        ? fromSeries
+        : fromStudy > 0
+          ? fromStudy
+          : fromSeries;
+    return sum + part;
+  }, 0);
+};
+
 const viewerLabelWithSize = (title: string, sizeLabel: string) => (
   <Box
     component="span"
@@ -136,6 +168,7 @@ const BurnPanel = () => {
     studies,
     selectedStudies,
     selectedSeries,
+    seriesMap,
     buildJob,
     setBuildJob,
   } = useCdStore();
@@ -166,10 +199,12 @@ const BurnPanel = () => {
     selectedPatient?.patient_id ?? firstSelectedStudy?.patient_id ?? "";
   const burnPatientName =
     selectedPatient?.patient_name ?? firstSelectedStudy?.patient_name ?? "";
-  const expectedInstances = selectedStudies.reduce((sum, studyUid) => {
-    const study = studies.find((s) => s.study_instance_uid === studyUid);
-    return sum + (study?.number_of_instances ?? 0);
-  }, 0);
+  const expectedInstances = expectedInstancesForSelection(
+    selectedStudies,
+    studies,
+    seriesMap,
+    selectedSeries,
+  );
 
   const canBuild =
     Boolean(selectedNode) &&
@@ -259,6 +294,7 @@ const BurnPanel = () => {
       expectedInstances,
       selectedStudies,
       selectedSeries,
+      seriesMap,
       setBuildJob,
       t,
       includeWindowsLauncher,
@@ -304,7 +340,7 @@ const BurnPanel = () => {
       downloadSpeedSampleRef.current = null;
 
       try {
-        const resp = await fetch(url, {
+        let resp = await fetch(url, {
           credentials: "include",
           signal: ac.signal,
           cache: "no-store",
@@ -322,18 +358,7 @@ const BurnPanel = () => {
           fallbackName,
         );
 
-        const reader = resp.body.getReader();
-        const chunks: BlobPart[] = [];
-        let received = 0;
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          if (!value) continue;
-          chunks.push(value);
-          received += value.byteLength;
-          setDownloadReceivedBytes(received);
-
+        const applyDownloadSpeedSample = (received: number) => {
           const now = Date.now();
           const prev = downloadSpeedSampleRef.current;
           if (!prev) {
@@ -348,6 +373,84 @@ const BurnPanel = () => {
               downloadSpeedSampleRef.current = { t: now, bytes: received };
             }
           }
+        };
+
+        const isZip = fallbackName.toLowerCase().endsWith(".zip");
+        if (
+          typeof window !== "undefined" &&
+          typeof window.showSaveFilePicker === "function" &&
+          resp.body
+        ) {
+          try {
+            const handle = await window.showSaveFilePicker({
+              suggestedName: filename,
+              types: [
+                {
+                  description: isZip ? "ZIP archive" : "Disc image",
+                  accept: isZip
+                    ? { "application/zip": [".zip"] }
+                    : { "application/x-iso9660-image": [".iso"] },
+                },
+              ],
+            });
+            const writable = await handle.createWritable();
+            const reader = resp.body.getReader();
+            let received = 0;
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (!value) continue;
+              await writable.write(value);
+              received += value.byteLength;
+              setDownloadReceivedBytes(received);
+              applyDownloadSpeedSample(received);
+            }
+            await writable.close();
+            const outFile = await handle.getFile();
+            setCompletedDownloads((prev) => ({ ...prev, [kind]: outFile.size }));
+            return;
+          } catch (pickerErr) {
+            if ((pickerErr as { name?: string })?.name === "AbortError") {
+              return;
+            }
+            console.warn(
+              "Save-file picker or disk write failed; retrying download for buffered save",
+              pickerErr,
+            );
+            resp = await fetch(url, {
+              credentials: "include",
+              signal: ac.signal,
+              cache: "no-store",
+            });
+            if (!resp.ok || !resp.body) {
+              throw new Error(`Download failed (HTTP ${resp.status})`);
+            }
+            const retryLen = resp.headers.get("Content-Length");
+            const retryParsed = retryLen ? Number.parseInt(retryLen, 10) : Number.NaN;
+            const retryTotal =
+              Number.isFinite(retryParsed) && retryParsed > 0 ? retryParsed : null;
+            setDownloadTotalBytes(retryTotal);
+            setDownloadReceivedBytes(0);
+            downloadSpeedSampleRef.current = null;
+            setDownloadSpeedPhaseBps(null);
+          }
+        }
+
+        const reader = resp.body?.getReader();
+        if (!reader) {
+          throw new Error("Download response had no body");
+        }
+        const chunks: BlobPart[] = [];
+        let received = 0;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          chunks.push(value);
+          received += value.byteLength;
+          setDownloadReceivedBytes(received);
+          applyDownloadSpeedSample(received);
         }
 
         const mime =

@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+import asyncio
 import zipfile
 import shutil
 from pathlib import Path
@@ -295,18 +296,24 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             kpacs_template_path=kpacs_tpl,
         )
 
-        expected_instances = burn_req.expected_instances or 0
-
         def on_instance_retrieved(total_retrieved: int, total_bytes: int) -> None:
             with job_lock:
                 job["retrieved_instances"] = total_retrieved
                 job["retrieved_bytes"] = total_bytes
-                if expected_instances > 0:
-                    ratio = min(total_retrieved / expected_instances, 1.0)
+                exp_raw = job.get("expected_instances")
+                exp = int(exp_raw) if exp_raw is not None else 0
+                # Some PACS return a wrong low NumberOfStudyRelatedInstances (e.g. 1 for
+                # hundreds of images). Once we exceed the stated total, ignore it so
+                # progress and the (n/m) message stay meaningful.
+                if exp > 0 and total_retrieved > exp:
+                    job["expected_instances"] = None
+                    exp = 0
+                if exp > 0:
+                    ratio = min(total_retrieved / exp, 1.0)
                     retrieval_progress = 0.05 + (0.75 * ratio)
                     job["message"] = (
                         f"Retrieving DICOM files from PACS... "
-                        f"({total_retrieved}/{expected_instances})"
+                        f"({total_retrieved}/{exp})"
                     )
                 else:
                     # Unknown total: keep moving slowly so users see activity.
@@ -325,12 +332,14 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
                 on_instance_retrieved=on_instance_retrieved,
                 images_subdir=WORKSPACE_STUDY_ZIP_SUBDIR,
             )
+            with job_lock:
+                job["expected_instances"] = job["retrieved_instances"]
             job["status"] = "building"
             job["message"] = "Creating ZIP of STUDY folder..."
             job["progress"] = 0.9
             zip_name = _safe_zip_basename(burn_req.patient_id, job_id)
             zip_path = os.path.join(config.TEMP_DIR, zip_name)
-            _zip_study_tree(work_dir, zip_path)
+            await asyncio.to_thread(_zip_study_tree, work_dir, zip_path)
             try:
                 shutil.rmtree(work_dir, ignore_errors=False)
             except OSError as cleanup_exc:
@@ -355,6 +364,8 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             series_filter=burn_req.series,
             on_instance_retrieved=on_instance_retrieved,
         )
+        with job_lock:
+            job["expected_instances"] = job["retrieved_instances"]
 
         job["status"] = "building"
         job["message"] = "Building ISO image with viewer and launchers..."
