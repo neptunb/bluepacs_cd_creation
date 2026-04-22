@@ -169,3 +169,11 @@ Port	         11113
       "name": "PACS (Neptun @i13)"
    }
 ```
+
+
+
+---------------------
+TO DOs:
+1. 2GB download limit
+2. STUDY zip  download for only infomed pacs. Download as 235/1
+   infomed does not send total image count.
