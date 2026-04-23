@@ -111,7 +111,7 @@
     "viewerLinux": "Linux'da Görüntüle",
     "viewerLinuxSize": "(220MB)",
     "viewerLinuxAria": "Linux görüntüleyicisini ISO’ya dahil et",
-    "hintZip": "Üç seçenek de PACS’tan alınan aynı görüntüleri veri.\n\n• STUDY (ZIP): Tek bir .zip dosyası indirilir.\n• DICOM ISO: CD’ye yazılacak disk görüntülerini ve görüntüleme dosyalarını içerir.\n• K-PACS ISO: Sadece Windows'a özgü bir disk görüntüsüdür.",
+    "hintZip": "Üç seçenek de PACS’tan alınan aynı görüntüleri verir.\n\n• STUDY (ZIP): Tek bir .zip dosyası indirilir.\n• DICOM ISO: CD’ye yazılacak disk görüntülerini ve görüntüleme dosyalarını içerir.\n• K-PACS ISO: Sadece Windows'a özgü bir disk görüntüsüdür.",
     "hintZipAria": "STUDY ZIP, OHIF ISO ve K-PACS ISO çıktılarının klasör yapısı farkları",
     "errorStartZip": "STUDY indirmesi başlatılamadı. Sunucu bağlantısını kontrol edin.",
     "errorStartIso": "CD görüntüsü oluşturulamadı. Sunucu bağlantısını kontrol edin.",
