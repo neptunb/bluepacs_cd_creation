@@ -40,5 +40,7 @@ EXPOSE 3100
 
 ENV PORT=3100
 ENV HOSTNAME="0.0.0.0"
+# Runtime proxy target for /api/burn/download* route handlers (large ISO streaming).
+ENV BACKEND_INTERNAL_URL=http://cd-backend:8100
 
 CMD ["node", "server.js"]

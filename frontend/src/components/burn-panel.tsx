@@ -20,6 +20,7 @@ import {
 } from "@mui/material";
 import AlbumIcon from "@mui/icons-material/Album";
 import DownloadIcon from "@mui/icons-material/Download";
+import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorIcon from "@mui/icons-material/Error";
 import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
@@ -33,7 +34,7 @@ import {
   cleanupJob,
 } from "@/lib/api";
 import type { Study, Series } from "@/lib/types";
-import type { Theme } from "@mui/material/styles";
+import type { SxProps, Theme } from "@mui/material/styles";
 
 const BUILD_STATUSES = [
   "queued",
@@ -97,6 +98,60 @@ const formatSpeed = (bytesPerSecond: number | null): string | null => {
     return null;
   }
   return `${formatBytes(bytesPerSecond)}/s`;
+};
+
+/** Parse Content-Length safely for multi-GB files (avoid parseInt quirks; stay within Number.isSafeInteger). */
+const parseContentLengthBytes = (raw: string | null): number | null => {
+  if (!raw) return null;
+  const n = Number(String(raw).trim());
+  if (!Number.isFinite(n) || n <= 0 || n > Number.MAX_SAFE_INTEGER) return null;
+  return Math.floor(n);
+};
+
+/** Stream the URL with cookies without buffering the whole body in JS (needed for files well above ~2GB on Windows/macOS). */
+const triggerBrowserNativeDownload = (url: string, filename: string): void => {
+  if (typeof document === "undefined") return;
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+};
+
+/**
+ * When the browser owns the download we disable the button; MUI's default disabled
+ * styling is too low-contrast — keep label and icon clearly readable.
+ */
+const browserHandoffContainedButtonSx = (
+  apply: boolean,
+  color: "success" | "primary",
+): SxProps<Theme> | undefined => {
+  if (!apply) return undefined;
+  return (theme: Theme) => {
+    const softBg =
+      color === "success"
+        ? theme.palette.success.light
+        : theme.palette.primary.light;
+    const iconColor =
+      color === "success"
+        ? theme.palette.success.dark
+        : theme.palette.primary.dark;
+    return {
+      "&.Mui-disabled": {
+        opacity: 1,
+        color: theme.palette.text.primary,
+        WebkitTextFillColor: theme.palette.text.primary,
+        backgroundColor: softBg,
+        "& .MuiSvgIcon-root": {
+          color: iconColor,
+        },
+        boxShadow: "none",
+      },
+    };
+  };
 };
 
 /** Prefer series-level instance totals when the study-level C-FIND count is missing or too low (some PACS). */
@@ -176,7 +231,7 @@ const BurnPanel = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [includeWindowsLauncher, setIncludeWindowsLauncher] = useState(true);
-  const [includeMacosLauncher, setIncludeMacosLauncher] = useState(true);
+  const [includeMacosLauncher, setIncludeMacosLauncher] = useState(false);
   const [includeLinuxLauncher, setIncludeLinuxLauncher] = useState(false);
   const [downloadSpeedBps, setDownloadSpeedBps] = useState<number | null>(null);
   const [downloadKind, setDownloadKind] = useState<"iso" | "kpacs" | null>(null);
@@ -187,6 +242,10 @@ const BurnPanel = () => {
     iso?: number;
     kpacs?: number;
   }>({});
+  /** Browser-native download started for OHIF/ZIP (shared slot uses "iso"). */
+  const [nativeHandoffIso, setNativeHandoffIso] = useState(false);
+  /** Browser-native download started for K-PACS ISO. */
+  const [nativeHandoffKpacs, setNativeHandoffKpacs] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const speedSampleRef = useRef<{ t: number; bytes: number } | null>(null);
   const downloadAbortRef = useRef<AbortController | null>(null);
@@ -214,6 +273,11 @@ const BurnPanel = () => {
   const anyIsoViewer =
     includeWindowsLauncher || includeMacosLauncher || includeLinuxLauncher;
 
+  const resetBrowserHandoffUi = useCallback(() => {
+    setNativeHandoffIso(false);
+    setNativeHandoffKpacs(false);
+  }, []);
+
   const startBuild = useCallback(
     async (opts: { studyZipOnly: boolean }) => {
       if (!selectedNode || !burnPatientId) return;
@@ -223,6 +287,7 @@ const BurnPanel = () => {
       speedSampleRef.current = null;
       setDownloadSpeedBps(null);
       setCompletedDownloads({});
+      resetBrowserHandoffUi();
 
       try {
         const isoViewers =
@@ -261,6 +326,8 @@ const BurnPanel = () => {
           retrieved_instances: 0,
           retrieved_bytes: 0,
           expected_instances: expectedInstances > 0 ? expectedInstances : null,
+          download_artifacts: [],
+          download_total_bytes: null,
         });
 
         let consecutivePollErrors = 0;
@@ -300,6 +367,7 @@ const BurnPanel = () => {
       includeWindowsLauncher,
       includeMacosLauncher,
       includeLinuxLauncher,
+      resetBrowserHandoffUi,
     ]
   );
 
@@ -340,23 +408,9 @@ const BurnPanel = () => {
       downloadSpeedSampleRef.current = null;
 
       try {
-        let resp = await fetch(url, {
-          credentials: "include",
-          signal: ac.signal,
-          cache: "no-store",
-        });
-        if (!resp.ok || !resp.body) {
-          throw new Error(`Download failed (HTTP ${resp.status})`);
-        }
-        const lenHeader = resp.headers.get("Content-Length");
-        const parsedLen = lenHeader ? Number.parseInt(lenHeader, 10) : Number.NaN;
-        const total =
-          Number.isFinite(parsedLen) && parsedLen > 0 ? parsedLen : null;
-        setDownloadTotalBytes(total);
-        const filename = parseFilenameFromDisposition(
-          resp.headers.get("Content-Disposition"),
-          fallbackName,
-        );
+        const canUseSavePicker =
+          typeof window !== "undefined" &&
+          typeof window.showSaveFilePicker === "function";
 
         const applyDownloadSpeedSample = (received: number) => {
           const now = Date.now();
@@ -375,99 +429,104 @@ const BurnPanel = () => {
           }
         };
 
-        const isZip = fallbackName.toLowerCase().endsWith(".zip");
-        if (
-          typeof window !== "undefined" &&
-          typeof window.showSaveFilePicker === "function" &&
-          resp.body
-        ) {
-          try {
-            const handle = await window.showSaveFilePicker({
-              suggestedName: filename,
-              types: [
-                {
-                  description: isZip ? "ZIP archive" : "Disc image",
-                  accept: isZip
-                    ? { "application/zip": [".zip"] }
-                    : { "application/x-iso9660-image": [".iso"] },
-                },
-              ],
-            });
-            const writable = await handle.createWritable();
-            const reader = resp.body.getReader();
-            let received = 0;
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              if (!value) continue;
-              await writable.write(value);
-              received += value.byteLength;
-              setDownloadReceivedBytes(received);
-              applyDownloadSpeedSample(received);
-            }
-            await writable.close();
-            const outFile = await handle.getFile();
-            setCompletedDownloads((prev) => ({ ...prev, [kind]: outFile.size }));
-            return;
-          } catch (pickerErr) {
-            if ((pickerErr as { name?: string })?.name === "AbortError") {
-              return;
-            }
-            console.warn(
-              "Save-file picker or disk write failed; retrying download for buffered save",
-              pickerErr,
-            );
-            resp = await fetch(url, {
-              credentials: "include",
-              signal: ac.signal,
-              cache: "no-store",
-            });
-            if (!resp.ok || !resp.body) {
-              throw new Error(`Download failed (HTTP ${resp.status})`);
-            }
-            const retryLen = resp.headers.get("Content-Length");
-            const retryParsed = retryLen ? Number.parseInt(retryLen, 10) : Number.NaN;
-            const retryTotal =
-              Number.isFinite(retryParsed) && retryParsed > 0 ? retryParsed : null;
-            setDownloadTotalBytes(retryTotal);
-            setDownloadReceivedBytes(0);
-            downloadSpeedSampleRef.current = null;
-            setDownloadSpeedPhaseBps(null);
+        if (!canUseSavePicker) {
+          const probeResp = await fetch(url, {
+            credentials: "include",
+            signal: ac.signal,
+            cache: "no-store",
+          });
+          if (!probeResp.ok) {
+            throw new Error(`Download failed (HTTP ${probeResp.status})`);
           }
+          const total = parseContentLengthBytes(
+            probeResp.headers.get("Content-Length"),
+          );
+          const filename = parseFilenameFromDisposition(
+            probeResp.headers.get("Content-Disposition"),
+            fallbackName,
+          );
+          setDownloadTotalBytes(total);
+          await probeResp.body?.cancel().catch(() => undefined);
+          triggerBrowserNativeDownload(url, filename);
+          if (kind === "iso") setNativeHandoffIso(true);
+          else setNativeHandoffKpacs(true);
+          return;
         }
 
-        const reader = resp.body?.getReader();
-        if (!reader) {
-          throw new Error("Download response had no body");
-        }
-        const chunks: BlobPart[] = [];
-        let received = 0;
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          if (!value) continue;
-          chunks.push(value);
-          received += value.byteLength;
-          setDownloadReceivedBytes(received);
-          applyDownloadSpeedSample(received);
+        const resp = await fetch(url, {
+          credentials: "include",
+          signal: ac.signal,
+          cache: "no-store",
+        });
+        if (!resp.ok || !resp.body) {
+          throw new Error(`Download failed (HTTP ${resp.status})`);
         }
 
-        const mime =
-          resp.headers.get("Content-Type") || "application/octet-stream";
-        const blob = new Blob(chunks, { type: mime });
-        const objectUrl = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = objectUrl;
-        anchor.download = filename;
-        anchor.rel = "noopener";
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        // Revoke after a beat so the browser can read the blob for "Save As".
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        const total = parseContentLengthBytes(resp.headers.get("Content-Length"));
+        setDownloadTotalBytes(total);
+        const filename = parseFilenameFromDisposition(
+          resp.headers.get("Content-Disposition"),
+          fallbackName,
+        );
 
-        setCompletedDownloads((prev) => ({ ...prev, [kind]: received }));
+        const isZip = fallbackName.toLowerCase().endsWith(".zip");
+
+        const savePicker = window.showSaveFilePicker;
+        if (!savePicker) {
+          await resp.body.cancel().catch(() => undefined);
+          triggerBrowserNativeDownload(url, filename);
+          if (kind === "iso") setNativeHandoffIso(true);
+          else setNativeHandoffKpacs(true);
+          return;
+        }
+
+        let streamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+        try {
+          const handle = await savePicker({
+            suggestedName: filename,
+            types: [
+              {
+                description: isZip ? "ZIP archive" : "Disc image",
+                accept: isZip
+                  ? { "application/zip": [".zip"] }
+                  : { "application/x-iso9660-image": [".iso"] },
+              },
+            ],
+          });
+          const writable = await handle.createWritable();
+          streamReader = resp.body.getReader();
+          let received = 0;
+          while (true) {
+            const { value, done } = await streamReader.read();
+            if (done) break;
+            if (!value) continue;
+            await writable.write(value as BufferSource);
+            received += value.byteLength;
+            setDownloadReceivedBytes(received);
+            applyDownloadSpeedSample(received);
+          }
+          await writable.close();
+          const outFile = await handle.getFile();
+          if (kind === "iso") setNativeHandoffIso(false);
+          else setNativeHandoffKpacs(false);
+          setCompletedDownloads((prev) => ({ ...prev, [kind]: outFile.size }));
+          return;
+        } catch (pickerErr) {
+          await streamReader?.cancel().catch(() => undefined);
+          if ((pickerErr as { name?: string })?.name === "AbortError") {
+            await resp.body?.cancel().catch(() => undefined);
+            return;
+          }
+          console.warn(
+            "Save-file picker or disk write failed; using browser native download",
+            pickerErr,
+          );
+          await resp.body?.cancel().catch(() => undefined);
+          triggerBrowserNativeDownload(url, filename);
+          if (kind === "iso") setNativeHandoffIso(true);
+          else setNativeHandoffKpacs(true);
+          return;
+        }
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") return;
         console.error("Streaming download failed:", err);
@@ -523,8 +582,9 @@ const BurnPanel = () => {
     setDownloadTotalBytes(null);
     setDownloadSpeedPhaseBps(null);
     setCompletedDownloads({});
+    resetBrowserHandoffUi();
     downloadSpeedSampleRef.current = null;
-  }, [buildJob, setBuildJob]);
+  }, [buildJob, setBuildJob, resetBrowserHandoffUi]);
 
   useEffect(() => {
     return () => {
@@ -811,7 +871,10 @@ const BurnPanel = () => {
                   isDownloading && downloadRatio !== null
                     ? downloadRatio * 100
                     : buildJob.progress * 100;
-                const useIndeterminate = isDownloading && downloadRatio === null;
+                // Tarayıcıya devredildikten sonra indirme bitişini bilemeyiz; indeterminate
+                // çubuğu sonsuz döner — bu yüzden burada sadece iş (buildJob.progress) kullanılır.
+                const useIndeterminate =
+                  isDownloading && downloadRatio === null;
 
                 return (
                   <LinearProgress
@@ -833,7 +896,9 @@ const BurnPanel = () => {
                         ? "downloadingKpacs"
                         : "downloadingIso",
                     )
-                  : buildJob.message}
+                  : nativeHandoffIso || nativeHandoffKpacs
+                    ? t("downloadSentToBrowserStatus")
+                    : buildJob.message}
               </Typography>
               <Typography variant="body2" className="text-gray-700 font-medium">
                 {t("retrievedInstances", {
@@ -862,6 +927,51 @@ const BurnPanel = () => {
                   })()}
                 </Typography>
               )}
+              {buildJob.status === "complete" &&
+                (buildJob.download_artifacts?.length ?? 0) > 0 && (
+                  <Box
+                    component="div"
+                    className="mt-1 flex flex-col gap-0.5"
+                    aria-label={t("downloadOutputsHeading")}
+                  >
+                    <Typography
+                      variant="body2"
+                      className="text-gray-800 font-semibold"
+                    >
+                      {t("downloadOutputsHeading")}
+                    </Typography>
+                    <Box
+                      component="ul"
+                      className="m-0 list-none space-y-0.5 pl-0"
+                    >
+                      {(buildJob.download_artifacts ?? []).map((a) => (
+                        <Box
+                          component="li"
+                          key={a.filename}
+                          className="text-gray-700 text-sm"
+                        >
+                          <Typography variant="body2" component="span">
+                            {t("downloadOutputRow", {
+                              name: a.filename,
+                              fileSize: formatBytes(a.size),
+                            })}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                    {buildJob.download_total_bytes != null &&
+                      buildJob.download_total_bytes > 0 && (
+                        <Typography
+                          variant="body2"
+                          className="text-gray-800 font-medium mt-0.5"
+                        >
+                          {t("downloadTotalDownloadable", {
+                            total: formatBytes(buildJob.download_total_bytes),
+                          })}
+                        </Typography>
+                      )}
+                  </Box>
+                )}
               {downloadKind !== null && (
                 <Typography
                   variant="body2"
@@ -919,6 +1029,19 @@ const BurnPanel = () => {
                   </Box>
                 )}
 
+              {(nativeHandoffIso || nativeHandoffKpacs) && (
+                <Alert
+                  id="burn-browser-handoff-help"
+                  severity="info"
+                  className="mt-1"
+                  role="status"
+                >
+                  <Typography variant="body2">
+                    {t("downloadSentToBrowserHelp")}
+                  </Typography>
+                </Alert>
+              )}
+
               {buildJob.download_ready && (
                 <>
                   <Divider />
@@ -940,6 +1063,8 @@ const BurnPanel = () => {
                         startIcon={
                           completedDownloads.iso !== undefined ? (
                             <CheckCircleIcon />
+                          ) : nativeHandoffIso ? (
+                            <CloudDownloadIcon />
                           ) : (
                             <DownloadIcon />
                           )
@@ -947,17 +1072,35 @@ const BurnPanel = () => {
                         onClick={handleDownload}
                         disabled={
                           downloadKind !== null ||
-                          completedDownloads.iso !== undefined
+                          completedDownloads.iso !== undefined ||
+                          nativeHandoffIso
                         }
-                        className="cursor-pointer"
+                        sx={browserHandoffContainedButtonSx(
+                          nativeHandoffIso,
+                          "success",
+                        )}
+                        className={
+                          nativeHandoffIso ||
+                          downloadKind !== null ||
+                          completedDownloads.iso !== undefined
+                            ? "cursor-default"
+                            : "cursor-pointer"
+                        }
                         aria-label={t("downloadZipAria")}
+                        aria-describedby={
+                          nativeHandoffIso
+                            ? "burn-browser-handoff-help"
+                            : undefined
+                        }
                         aria-busy={downloadKind === "iso"}
                       >
                         {completedDownloads.iso !== undefined
                           ? t("downloadCompleted")
                           : downloadKind === "iso"
                             ? t("downloadInProgress")
-                            : t("downloadZip")}
+                            : nativeHandoffIso
+                              ? t("downloadSentToBrowserButton")
+                              : t("downloadZip")}
                       </Button>
                     </>
                   ) : (
@@ -1005,6 +1148,8 @@ const BurnPanel = () => {
                             startIcon={
                               completedDownloads.iso !== undefined ? (
                                 <CheckCircleIcon />
+                              ) : nativeHandoffIso ? (
+                                <CloudDownloadIcon />
                               ) : (
                                 <DownloadIcon />
                               )
@@ -1012,17 +1157,35 @@ const BurnPanel = () => {
                             onClick={handleDownload}
                             disabled={
                               downloadKind !== null ||
-                              completedDownloads.iso !== undefined
+                              completedDownloads.iso !== undefined ||
+                              nativeHandoffIso
                             }
-                            className="cursor-pointer"
+                            sx={browserHandoffContainedButtonSx(
+                              nativeHandoffIso,
+                              "success",
+                            )}
+                            className={
+                              nativeHandoffIso ||
+                              downloadKind !== null ||
+                              completedDownloads.iso !== undefined
+                                ? "cursor-default"
+                                : "cursor-pointer"
+                            }
                             aria-label={t("downloadIsoAria")}
+                            aria-describedby={
+                              nativeHandoffIso
+                                ? "burn-browser-handoff-help"
+                                : undefined
+                            }
                             aria-busy={downloadKind === "iso"}
                           >
                             {completedDownloads.iso !== undefined
                               ? t("downloadCompleted")
                               : downloadKind === "iso"
                                 ? t("downloadInProgress")
-                                : t("downloadIso")}
+                                : nativeHandoffIso
+                                  ? t("downloadSentToBrowserButton")
+                                  : t("downloadIso")}
                           </Button>
                         </Paper>
                         {buildJob.kpacs_download_ready === true && (
@@ -1064,6 +1227,8 @@ const BurnPanel = () => {
                               startIcon={
                                 completedDownloads.kpacs !== undefined ? (
                                   <CheckCircleIcon />
+                                ) : nativeHandoffKpacs ? (
+                                  <CloudDownloadIcon />
                                 ) : (
                                   <DownloadIcon />
                                 )
@@ -1071,17 +1236,35 @@ const BurnPanel = () => {
                               onClick={handleDownloadKpacs}
                               disabled={
                                 downloadKind !== null ||
-                                completedDownloads.kpacs !== undefined
+                                completedDownloads.kpacs !== undefined ||
+                                nativeHandoffKpacs
                               }
-                              className="cursor-pointer"
+                              sx={browserHandoffContainedButtonSx(
+                                nativeHandoffKpacs,
+                                "primary",
+                              )}
+                              className={
+                                nativeHandoffKpacs ||
+                                downloadKind !== null ||
+                                completedDownloads.kpacs !== undefined
+                                  ? "cursor-default"
+                                  : "cursor-pointer"
+                              }
                               aria-label={t("downloadKpacsAria")}
+                              aria-describedby={
+                                nativeHandoffKpacs
+                                  ? "burn-browser-handoff-help"
+                                  : undefined
+                              }
                               aria-busy={downloadKind === "kpacs"}
                             >
                               {completedDownloads.kpacs !== undefined
                                 ? t("downloadCompleted")
                                 : downloadKind === "kpacs"
                                   ? t("downloadInProgress")
-                                  : t("downloadKpacs")}
+                                  : nativeHandoffKpacs
+                                    ? t("downloadSentToBrowserButton")
+                                    : t("downloadKpacs")}
                             </Button>
                           </Paper>
                         )}

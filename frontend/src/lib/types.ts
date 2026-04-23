@@ -40,6 +40,11 @@ export interface Series {
   body_part_examined: string | null;
 }
 
+export interface DownloadArtifact {
+  filename: string;
+  size: number;
+}
+
 export interface BuildJob {
   job_id: string;
   status: "queued" | "retrieving" | "building" | "complete" | "error";
@@ -54,4 +59,7 @@ export interface BuildJob {
   retrieved_instances: number;
   retrieved_bytes: number;
   expected_instances: number | null;
+  /** Present when the job is complete and output files exist on disk. */
+  download_artifacts?: DownloadArtifact[];
+  download_total_bytes?: number | null;
 }

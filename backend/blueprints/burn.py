@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import uuid
 import logging
@@ -23,6 +25,33 @@ burn_bp = Blueprint("burn")
 
 active_jobs: dict[str, dict] = {}
 job_locks: dict[str, Lock] = {}
+
+
+def _download_artifacts_payload(job: dict) -> tuple[list[dict[str, int]], int | None]:
+    """List built output files with sizes and their sum (only when job is complete and files exist)."""
+    if job.get("status") != "complete":
+        return [], None
+    artifacts: list[dict[str, int]] = []
+    main_path = job.get("output_path")
+    main_name = job.get("filename")
+    if main_path and main_name and os.path.isfile(main_path):
+        try:
+            artifacts.append(
+                {"filename": main_name, "size": int(os.path.getsize(main_path))}
+            )
+        except OSError:
+            pass
+    kp_path = job.get("kpacs_output_path")
+    kp_name = job.get("kpacs_filename")
+    if kp_path and kp_name and os.path.isfile(kp_path):
+        try:
+            artifacts.append(
+                {"filename": kp_name, "size": int(os.path.getsize(kp_path))}
+            )
+        except OSError:
+            pass
+    total = sum(a["size"] for a in artifacts) if artifacts else None
+    return artifacts, total
 
 
 def _resolve_kpacs_template_path(path_str: str) -> str:
@@ -153,6 +182,7 @@ async def get_status(request: Request, job_id: str):
         return json_response({"error": "Job not found"}, status=404)
 
     kpacs_path = job.get("kpacs_output_path")
+    download_artifacts, download_total_bytes = _download_artifacts_payload(job)
     return json_response({
         "job_id": job_id,
         "status": job["status"],
@@ -167,6 +197,8 @@ async def get_status(request: Request, job_id: str):
         "retrieved_bytes": job.get("retrieved_bytes", 0),
         "expected_instances": job.get("expected_instances"),
         "download_kind": job.get("download_kind", "ohif_iso"),
+        "download_artifacts": download_artifacts,
+        "download_total_bytes": download_total_bytes,
     })
 
 

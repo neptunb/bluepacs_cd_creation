@@ -1,4 +1,4 @@
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 from datetime import date
 
@@ -92,6 +92,13 @@ class BurnRequest(BaseModel):
         return self
 
 
+class DownloadArtifact(BaseModel):
+    """One built file the user can download (name + size on disk)."""
+
+    filename: str
+    size: int
+
+
 class BuildProgress(BaseModel):
     job_id: str
     status: str  # "queued", "retrieving", "building", "complete", "error"
@@ -104,4 +111,7 @@ class BuildProgress(BaseModel):
     kpacs_download_ready: bool = False
     kpacs_error: Optional[str] = None
     retrieved_instances: int = 0
+    retrieved_bytes: int = 0
     expected_instances: Optional[int] = None
+    download_artifacts: list[DownloadArtifact] = Field(default_factory=list)
+    download_total_bytes: Optional[int] = None
