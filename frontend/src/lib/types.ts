@@ -50,6 +50,10 @@ export interface BuildJob {
   status: "queued" | "retrieving" | "building" | "complete" | "error";
   progress: number;
   message: string;
+  /** When set, UI may translate via burnPanel.jobMessages.<key>. */
+  message_key?: string | null;
+  /** Interpolation values for ``message_key`` (e.g. current/total while retrieving). */
+  message_params?: Record<string, number | string> | null;
   filename: string | null;
   download_ready: boolean;
   download_kind: "ohif_iso" | "study_zip";

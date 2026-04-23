@@ -14,6 +14,17 @@ from sanic.request import Request
 from sanic.response import file_stream
 
 from constants.disc_layout import WORKSPACE_STUDY_ZIP_SUBDIR
+from constants.job_messages import (
+    BOTH_ISOS_READY,
+    CREATING_STUDY_ZIP,
+    DEFAULT_MESSAGE_TEXT,
+    ISO_READY_DOWNLOAD_BURN,
+    OHIF_ISO_READY_KPACS_FAILED,
+    RETRIEVING_DICOM_PACS_COUNT,
+    RETRIEVING_DICOM_PACS_FRACTION,
+    RETRIEVING_DICOM_PACS_INITIAL,
+    STUDY_ZIP_READY,
+)
 from models.schemas import BurnRequest
 from services.cd_builder import CdBuilderService
 from services.ultramar_nodes import fetch_node
@@ -25,6 +36,18 @@ burn_bp = Blueprint("burn")
 
 active_jobs: dict[str, dict] = {}
 job_locks: dict[str, Lock] = {}
+
+
+def _set_job_message(
+    job: dict,
+    text: str,
+    key: str | None = None,
+    params: dict | None = None,
+) -> None:
+    """Set ``message``, optional i18n ``message_key``, and optional ``message_params``."""
+    job["message"] = text
+    job["message_key"] = key
+    job["message_params"] = None if key is None else params
 
 
 def _download_artifacts_payload(job: dict) -> tuple[list[dict[str, int]], int | None]:
@@ -154,6 +177,8 @@ async def create_cd(request: Request):
         "status": "queued",
         "progress": 0.0,
         "message": "Job queued",
+        "message_key": None,
+        "message_params": None,
         "output_path": None,
         "filename": None,
         "kpacs_output_path": None,
@@ -188,6 +213,8 @@ async def get_status(request: Request, job_id: str):
         "status": job["status"],
         "progress": job["progress"],
         "message": job["message"],
+        "message_key": job.get("message_key"),
+        "message_params": job.get("message_params"),
         "filename": job["filename"],
         "download_ready": job["status"] == "complete" and job["output_path"] is not None,
         "kpacs_filename": job.get("kpacs_filename"),
@@ -308,7 +335,11 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
     job_lock = job_locks[job_id]
     try:
         job["status"] = "retrieving"
-        job["message"] = "Retrieving DICOM files from PACS... (0)"
+        _set_job_message(
+            job,
+            DEFAULT_MESSAGE_TEXT[RETRIEVING_DICOM_PACS_INITIAL],
+            RETRIEVING_DICOM_PACS_INITIAL,
+        )
         job["progress"] = 0.05
 
         orthanc_user, orthanc_password = config.orthanc_http_credentials(node)
@@ -343,16 +374,26 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
                 if exp > 0:
                     ratio = min(total_retrieved / exp, 1.0)
                     retrieval_progress = 0.05 + (0.75 * ratio)
-                    job["message"] = (
-                        f"Retrieving DICOM files from PACS... "
-                        f"({total_retrieved}/{exp})"
+                    _set_job_message(
+                        job,
+                        (
+                            f"Retrieving DICOM files from PACS... "
+                            f"({total_retrieved}/{exp})"
+                        ),
+                        RETRIEVING_DICOM_PACS_FRACTION,
+                        {"current": total_retrieved, "total": exp},
                     )
                 else:
                     # Unknown total: keep moving slowly so users see activity.
                     retrieval_progress = min(0.8, 0.05 + (total_retrieved * 0.001))
-                    job["message"] = (
-                        f"Retrieving DICOM files from PACS... "
-                        f"({total_retrieved} retrieved)"
+                    _set_job_message(
+                        job,
+                        (
+                            f"Retrieving DICOM files from PACS... "
+                            f"({total_retrieved} retrieved)"
+                        ),
+                        RETRIEVING_DICOM_PACS_COUNT,
+                        {"count": total_retrieved},
                     )
                 job["progress"] = retrieval_progress
 
@@ -367,7 +408,11 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             with job_lock:
                 job["expected_instances"] = job["retrieved_instances"]
             job["status"] = "building"
-            job["message"] = "Creating ZIP of STUDY folder..."
+            _set_job_message(
+                job,
+                DEFAULT_MESSAGE_TEXT[CREATING_STUDY_ZIP],
+                CREATING_STUDY_ZIP,
+            )
             job["progress"] = 0.9
             zip_name = _safe_zip_basename(burn_req.patient_id, job_id)
             zip_path = os.path.join(config.TEMP_DIR, zip_name)
@@ -384,9 +429,10 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             job["kpacs_error"] = None
             job["status"] = "complete"
             job["progress"] = 1.0
-            job["message"] = (
-                "STUDY folder ZIP is ready — it contains only the retrieved instances "
-                "under STUDY/<StudyInstanceUID>/..."
+            _set_job_message(
+                job,
+                DEFAULT_MESSAGE_TEXT[STUDY_ZIP_READY],
+                STUDY_ZIP_READY,
             )
             return
 
@@ -400,7 +446,11 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             job["expected_instances"] = job["retrieved_instances"]
 
         job["status"] = "building"
-        job["message"] = "Building ISO image with viewer and launchers..."
+        _set_job_message(
+            job,
+            "Building ISO image with viewer and launchers...",
+            None,
+        )
         job["progress"] = 0.9
 
         output_path = await builder.build_iso(
@@ -418,7 +468,11 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
         job["filename"] = filename
 
         if burn_req.include_kpacs:
-            job["message"] = "Building K-PACS disc image (DICOMDIR + viewer)..."
+            _set_job_message(
+                job,
+                "Building K-PACS disc image (DICOMDIR + viewer)...",
+                None,
+            )
             job["progress"] = 0.95
             try:
                 kpacs_path = await builder.build_kpacs_iso(
@@ -440,19 +494,25 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
         job["status"] = "complete"
         job["progress"] = 1.0
         if job.get("kpacs_error"):
-            job["message"] = (
-                "OHIF ISO is ready below. K-PACS ISO failed — see the message under "
-                "the K-PACS download button."
+            _set_job_message(
+                job,
+                DEFAULT_MESSAGE_TEXT[OHIF_ISO_READY_KPACS_FAILED],
+                OHIF_ISO_READY_KPACS_FAILED,
             )
         elif burn_req.include_kpacs and job.get("kpacs_output_path"):
-            job["message"] = (
-                "Both disc images are ready: OHIF viewer ISO and K-PACS layout ISO "
-                "(download below)."
+            _set_job_message(
+                job,
+                DEFAULT_MESSAGE_TEXT[BOTH_ISOS_READY],
+                BOTH_ISOS_READY,
             )
         else:
-            job["message"] = "ISO ready — download it and burn to CD on your PC"
+            _set_job_message(
+                job,
+                DEFAULT_MESSAGE_TEXT[ISO_READY_DOWNLOAD_BURN],
+                ISO_READY_DOWNLOAD_BURN,
+            )
 
     except Exception as e:
         job["status"] = "error"
-        job["message"] = str(e)
+        _set_job_message(job, str(e), None)
         job["progress"] = 0.0

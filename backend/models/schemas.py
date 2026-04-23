@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional
+from typing import Any, Optional
 from datetime import date
 
 
@@ -104,6 +104,8 @@ class BuildProgress(BaseModel):
     status: str  # "queued", "retrieving", "building", "complete", "error"
     progress: float  # 0.0 to 1.0
     message: str
+    message_key: Optional[str] = None
+    message_params: Optional[dict[str, Any]] = None
     filename: Optional[str] = None
     download_ready: bool = False
     download_kind: str = "ohif_iso"  # ohif_iso | study_zip

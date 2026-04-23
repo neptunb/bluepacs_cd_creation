@@ -119,6 +119,16 @@
     "dialogTitleIso": "CD Image Builder",
     "statusLabel": "Status:",
     "progressAria": "Build progress",
+    "jobMessages": {
+      "creating_study_zip": "Creating ZIP of STUDY folder...",
+      "study_zip_ready": "STUDY folder ZIP is ready — it contains only the retrieved instances under STUDY/<StudyInstanceUID>/...",
+      "ohif_iso_ready_kpacs_failed": "OHIF ISO is ready below. K-PACS ISO failed — see the message under the K-PACS download button.",
+      "both_isos_ready": "Both disc images are ready: OHIF viewer ISO and K-PACS layout ISO (download below).",
+      "iso_ready_download_burn": "ISO ready — download it and burn to CD on your PC",
+      "retrieving_dicom_pacs_initial": "Retrieving DICOM files from PACS... (0)",
+      "retrieving_dicom_pacs_fraction": "Retrieving DICOM files from PACS... ({current}/{total})",
+      "retrieving_dicom_pacs_count": "Retrieving DICOM files from PACS... ({count} retrieved)"
+    },
     "retrievedInstances": "Retrieved instances: {count}",
     "downloadOutputsHeading": "Files ready to download",
     "downloadOutputRow": "{name} — {fileSize}",

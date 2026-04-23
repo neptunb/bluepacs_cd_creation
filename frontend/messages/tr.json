@@ -119,6 +119,16 @@
     "dialogTitleIso": "CD görüntü oluşturucu",
     "statusLabel": "Durum:",
     "progressAria": "Oluşturma ilerlemesi",
+    "jobMessages": {
+      "creating_study_zip": "STUDY klasörü ZIP'i oluşturuluyor...",
+      "study_zip_ready": "STUDY klasörü ZIP'i hazır — yalnızca PACS'tan alınan örnekleri STUDY/<StudyInstanceUID>/... altında içerir.",
+      "ohif_iso_ready_kpacs_failed": "OHIF ISO aşağıda hazır. K-PACS ISO oluşturulamadı — mesajı K-PACS indirme düğmesinin altında görebilirsiniz.",
+      "both_isos_ready": "İki disk görüntüsü de hazır: OHIF görüntüleyici ISO'su ve K-PACS düzen ISO'su (aşağıdan indirin).",
+      "iso_ready_download_burn": "ISO hazır — indirip bilgisayarınızda CD'ye yazın.",
+      "retrieving_dicom_pacs_initial": "PACS'tan DICOM dosyaları alınıyor... (0)",
+      "retrieving_dicom_pacs_fraction": "PACS'tan DICOM dosyaları alınıyor... ({current}/{total})",
+      "retrieving_dicom_pacs_count": "PACS'tan DICOM dosyaları alınıyor... ({count} alındı)"
+    },
     "retrievedInstances": "Alınan örnekler: {count}",
     "downloadOutputsHeading": "İndirilebilir dosyalar",
     "downloadOutputRow": "{name} — {fileSize}",

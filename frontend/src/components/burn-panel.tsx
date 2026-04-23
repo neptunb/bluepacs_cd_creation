@@ -44,6 +44,31 @@ const BUILD_STATUSES = [
   "error",
 ] as const;
 
+/** Must match ``constants.job_messages`` keys on the API. */
+const JOB_MESSAGE_KEY_CREATING_STUDY_ZIP = "creating_study_zip";
+const JOB_MESSAGE_KEY_STUDY_ZIP_READY = "study_zip_ready";
+const JOB_MESSAGE_KEY_OHIF_ISO_READY_KPACS_FAILED =
+  "ohif_iso_ready_kpacs_failed";
+const JOB_MESSAGE_KEY_BOTH_ISOS_READY = "both_isos_ready";
+const JOB_MESSAGE_KEY_ISO_READY_DOWNLOAD_BURN = "iso_ready_download_burn";
+const JOB_MESSAGE_KEY_RETRIEVING_DICOM_PACS_INITIAL =
+  "retrieving_dicom_pacs_initial";
+const JOB_MESSAGE_KEY_RETRIEVING_DICOM_PACS_FRACTION =
+  "retrieving_dicom_pacs_fraction";
+const JOB_MESSAGE_KEY_RETRIEVING_DICOM_PACS_COUNT =
+  "retrieving_dicom_pacs_count";
+
+const TRANSLATED_JOB_MESSAGE_KEYS = new Set<string>([
+  JOB_MESSAGE_KEY_CREATING_STUDY_ZIP,
+  JOB_MESSAGE_KEY_STUDY_ZIP_READY,
+  JOB_MESSAGE_KEY_OHIF_ISO_READY_KPACS_FAILED,
+  JOB_MESSAGE_KEY_BOTH_ISOS_READY,
+  JOB_MESSAGE_KEY_ISO_READY_DOWNLOAD_BURN,
+  JOB_MESSAGE_KEY_RETRIEVING_DICOM_PACS_INITIAL,
+  JOB_MESSAGE_KEY_RETRIEVING_DICOM_PACS_FRACTION,
+  JOB_MESSAGE_KEY_RETRIEVING_DICOM_PACS_COUNT,
+]);
+
 type BuildStatusKey = (typeof BUILD_STATUSES)[number];
 
 const isBuildStatusKey = (s: string): s is BuildStatusKey =>
@@ -217,6 +242,7 @@ const viewerLabelWithSize = (title: string, sizeLabel: string) => (
 const BurnPanel = () => {
   const t = useTranslations("burnPanel");
   const tStatus = useTranslations("burnPanel.status");
+  const tJobMessages = useTranslations("burnPanel.jobMessages");
   const {
     selectedNode,
     selectedPatient,
@@ -317,6 +343,8 @@ const BurnPanel = () => {
           status: "queued",
           progress: 0,
           message: t("jobQueued"),
+          message_key: null,
+          message_params: null,
           filename: null,
           download_ready: false,
           download_kind: opts.studyZipOnly ? "study_zip" : "ohif_iso",
@@ -898,7 +926,15 @@ const BurnPanel = () => {
                     )
                   : nativeHandoffIso || nativeHandoffKpacs
                     ? t("downloadSentToBrowserStatus")
-                    : buildJob.message}
+                    : buildJob.message_key &&
+                        TRANSLATED_JOB_MESSAGE_KEYS.has(buildJob.message_key)
+                      ? buildJob.message_params
+                        ? tJobMessages(
+                            buildJob.message_key,
+                            buildJob.message_params,
+                          )
+                        : tJobMessages(buildJob.message_key)
+                      : buildJob.message}
               </Typography>
               <Typography variant="body2" className="text-gray-700 font-medium">
                 {t("retrievedInstances", {
