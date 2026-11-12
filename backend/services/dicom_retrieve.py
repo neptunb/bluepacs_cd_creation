@@ -24,6 +24,8 @@ from pydicom.uid import (
     ExplicitVRBigEndian,
 )
 
+from config import config
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +76,31 @@ def _instance_filename(
             return candidate
 
     return f"IMG_{fallback_counter:06d}.dcm"
+
+
+def _store_orthanc_instance(
+    data: bytes,
+    orthanc_instance_id: str,
+    series_dir: str,
+    fallback_counter: int,
+) -> None:
+    """Write one ``GET /instances/{id}/file`` body as ``IMG*.dcm`` in ``series_dir``."""
+    instance_number = None
+    sop_uid = orthanc_instance_id
+    try:
+        header_ds = pydicom.dcmread(io.BytesIO(data), stop_before_pixels=True, force=True)
+        instance_number = getattr(header_ds, "InstanceNumber", None)
+        sop_uid = str(getattr(header_ds, "SOPInstanceUID", orthanc_instance_id))
+    except Exception as parse_exc:
+        logger.debug(
+            "Orthanc retrieve: could not parse header for %s: %s",
+            orthanc_instance_id,
+            parse_exc,
+        )
+
+    filename = _instance_filename(series_dir, instance_number, sop_uid, fallback_counter)
+    with open(os.path.join(series_dir, filename), "wb") as f:
+        f.write(data)
 
 
 class DicomRetrieveService:
@@ -410,6 +437,34 @@ class DicomRetrieveService:
                 )
             diagnostics["series_total"] = len(series_ids)
 
+            download_slots = asyncio.Semaphore(max(1, config.ORTHANC_RETRIEVE_CONCURRENCY))
+            # Filenames are chosen by probing the series folder, so naming + writing stay serialized.
+            store_lock = asyncio.Lock()
+
+            async def _download_instance(iid: str, series_dir: str) -> None:
+                nonlocal file_count, byte_count
+                file_url = f"{self.orthanc_url}/instances/{iid}/file"
+                async with download_slots:
+                    async with session.get(file_url) as file_resp:
+                        if file_resp.status != 200:
+                            if len(http_errors) < 10:
+                                http_errors.append(
+                                    f"GET /instances/{iid}/file -> {file_resp.status}"
+                                )
+                            return
+                        data = await file_resp.read()
+                if not data:
+                    return
+                async with store_lock:
+                    await asyncio.to_thread(
+                        _store_orthanc_instance, data, str(iid), series_dir, file_count + 1
+                    )
+                    file_count += 1
+                    byte_count += len(data)
+                    diagnostics["instances_downloaded"] += 1
+                    if on_instance_retrieved:
+                        on_instance_retrieved(file_count, byte_count)
+
             for sid in series_ids:
                 if not sid:
                     continue
@@ -440,50 +495,9 @@ class DicomRetrieveService:
                     continue
                 diagnostics["instances_listed"] += len(instance_ids)
 
-                for iid in instance_ids:
-                    file_url = f"{self.orthanc_url}/instances/{iid}/file"
-                    async with session.get(file_url) as file_resp:
-                        if file_resp.status != 200:
-                            if len(http_errors) < 10:
-                                http_errors.append(
-                                    f"GET /instances/{iid}/file -> {file_resp.status}"
-                                )
-                            continue
-                        data = await file_resp.read()
-                    if not data:
-                        continue
-
-                    instance_number = None
-                    sop_uid = str(iid)
-                    try:
-                        header_ds = pydicom.dcmread(
-                            io.BytesIO(data),
-                            stop_before_pixels=True,
-                            force=True,
-                        )
-                        instance_number = getattr(header_ds, "InstanceNumber", None)
-                        sop_uid = str(getattr(header_ds, "SOPInstanceUID", iid))
-                    except Exception as parse_exc:
-                        logger.debug(
-                            "Orthanc retrieve: could not parse header for %s: %s",
-                            iid,
-                            parse_exc,
-                        )
-
-                    filename = _instance_filename(
-                        series_dir,
-                        instance_number,
-                        sop_uid,
-                        file_count + 1,
-                    )
-                    filepath = os.path.join(series_dir, filename)
-                    with open(filepath, "wb") as f:
-                        f.write(data)
-                    file_count += 1
-                    byte_count += len(data)
-                    diagnostics["instances_downloaded"] += 1
-                    if on_instance_retrieved:
-                        on_instance_retrieved(file_count, byte_count)
+                await asyncio.gather(
+                    *(_download_instance(iid, series_dir) for iid in instance_ids)
+                )
 
             if file_count == 0:
                 # Final fallback: download whole study archive from Orthanc and extract.
