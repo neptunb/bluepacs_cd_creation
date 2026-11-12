@@ -6,6 +6,7 @@ import logging
 import asyncio
 import zipfile
 import shutil
+import time
 from pathlib import Path
 from threading import Lock
 
@@ -36,6 +37,65 @@ burn_bp = Blueprint("burn")
 
 active_jobs: dict[str, dict] = {}
 job_locks: dict[str, Lock] = {}
+
+TEMP_CLEANUP_INTERVAL_SECONDS = 3600
+
+
+def _remove_stale_temp_entries(temp_dir: str, max_age_hours: float) -> tuple[int, int]:
+    """Delete top-level entries of ``temp_dir`` (job folders, ZIP, ISO) older than ``max_age_hours``.
+
+    Returns ``(removed_count, freed_bytes)``.
+    """
+    if max_age_hours <= 0 or not os.path.isdir(temp_dir):
+        return 0, 0
+    cutoff = time.time() - max_age_hours * 3600
+    removed = 0
+    freed = 0
+    for entry in os.scandir(temp_dir):
+        try:
+            if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                size = sum(
+                    os.path.getsize(os.path.join(root, name))
+                    for root, _dirs, files in os.walk(entry.path)
+                    for name in files
+                )
+                shutil.rmtree(entry.path)
+            else:
+                size = entry.stat(follow_symlinks=False).st_size
+                os.remove(entry.path)
+            removed += 1
+            freed += size
+        except OSError as e:
+            logger.warning("Temp cleanup: could not remove %s: %s", entry.path, e)
+    return removed, freed
+
+
+async def _temp_cleanup_loop() -> None:
+    while True:
+        try:
+            removed, freed = await asyncio.to_thread(
+                _remove_stale_temp_entries, config.TEMP_DIR, config.TEMP_MAX_AGE_HOURS
+            )
+            if removed:
+                logger.info(
+                    "Temp cleanup: removed %d entr%s (%.1f GB) older than %sh from %s",
+                    removed,
+                    "y" if removed == 1 else "ies",
+                    freed / 1e9,
+                    config.TEMP_MAX_AGE_HOURS,
+                    config.TEMP_DIR,
+                )
+        except Exception:
+            logger.exception("Temp cleanup failed")
+        await asyncio.sleep(TEMP_CLEANUP_INTERVAL_SECONDS)
+
+
+@burn_bp.listener("after_server_start")
+async def _start_temp_cleanup(app, _loop) -> None:
+    if config.TEMP_MAX_AGE_HOURS > 0:
+        app.add_task(_temp_cleanup_loop(), name="temp_cleanup")
 
 
 def _set_job_message(
@@ -134,7 +194,8 @@ def _zip_study_tree(work_dir: str, zip_path: str) -> None:
         raise RuntimeError("STUDY folder missing after retrieve")
     n_files = 0
     zip_root = f"{WORKSPACE_STUDY_ZIP_SUBDIR}/"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    # DICOM pixel data barely compresses; DEFLATE cost minutes of CPU on multi-GB studies.
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
         # Explicit root helps some ZIP tools show an empty STUDY tree consistently.
         zinfo = zipfile.ZipInfo(zip_root)
         zinfo.external_attr = 0o40755 << 16
@@ -269,6 +330,7 @@ async def download_iso(request: Request, job_id: str):
         out_path,
         mime_type=mime,
         headers=headers,
+        chunk_size=config.DOWNLOAD_CHUNK_SIZE,
     )
 
 
@@ -304,6 +366,7 @@ async def download_kpacs_iso(request: Request, job_id: str):
         kpacs_path,
         mime_type="application/x-iso9660-image",
         headers=headers,
+        chunk_size=config.DOWNLOAD_CHUNK_SIZE,
     )
 
 
