@@ -23,6 +23,12 @@ class Config:
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
 
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/bluepacs_cd")
+    # Job folders / ZIP / ISO files in TEMP_DIR older than this are deleted hourly (0 = never).
+    TEMP_MAX_AGE_HOURS: float = float(os.getenv("TEMP_MAX_AGE_HOURS", "24"))
+    # Sanic's file_stream default (4 KiB) caps multi-GB ZIP/ISO downloads far below LAN speed.
+    DOWNLOAD_CHUNK_SIZE: int = int(os.getenv("DOWNLOAD_CHUNK_SIZE", str(1024 * 1024)))
+    # Parallel GET /instances/{id}/file requests per study when orthanc_url is set.
+    ORTHANC_RETRIEVE_CONCURRENCY: int = int(os.getenv("ORTHANC_RETRIEVE_CONCURRENCY", "8"))
     # Standalone OHIF viewer: the self-contained macos_view / linux_view /
     # windows_view.exe binaries plus the study/ placeholder folder. Populate
     # with `./scripts/sync_standalone.sh` (see cd_template/standalone/README.md).

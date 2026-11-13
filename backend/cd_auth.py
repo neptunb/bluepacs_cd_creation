@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -62,6 +63,9 @@ async def validate_ultramar_cd_access(request: Request) -> tuple[bool, Optional[
                     return True, None
                 err = data.get("error") if isinstance(data, dict) else None
                 return False, str(err or "not_allowed")
+    except asyncio.TimeoutError:
+        logger.warning("CD auth request timed out after 10s: %s", url)
+        return False, "auth_service_timeout"
     except aiohttp.ClientError as e:
         logger.exception("CD auth request failed: %s", e)
         return False, "auth_service_unreachable"
