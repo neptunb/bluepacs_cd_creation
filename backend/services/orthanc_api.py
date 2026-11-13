@@ -129,6 +129,60 @@ class OrthancApiService:
             logger.error("Orthanc API POST failed: %s — %s", url, e)
             return None
 
+    async def _count_instances(
+        self,
+        resource_level: str,
+        orthanc_id: str,
+        *,
+        session: aiohttp.ClientSession | None = None,
+    ) -> int | None:
+        """``GET /{studies|series}/{id}/statistics`` → CountInstances (indexed, cheap)."""
+        if not orthanc_id:
+            return None
+        path = f"/{resource_level}/{orthanc_id}/statistics"
+        if session is None:
+            stats = await self._get(path, label=f"{resource_level}_statistics")
+        else:
+            url = f"{self.base_url}{path}"
+            try:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=15)
+                ) as resp:
+                    if resp.status != 200:
+                        return None
+                    stats = await resp.json()
+            except Exception as e:
+                logger.debug("Orthanc statistics failed %s: %s", path, e)
+                return None
+        if isinstance(stats, dict) and stats.get("CountInstances") is not None:
+            return int(stats["CountInstances"])
+        return None
+
+    async def _enrich_study_instance_counts(self, rows: list[dict]) -> list[dict]:
+        """Fill number_of_instances from Orthanc study statistics (parallel)."""
+        if not rows:
+            return rows
+        ids = [r.pop("_orthanc_id", None) or r.get("orthanc_id") for r in rows]
+        for r in rows:
+            r.pop("orthanc_id", None)
+
+        async with aiohttp.ClientSession(auth=self.auth) as session:
+            sem = asyncio.Semaphore(32)
+
+            async def one(i: int, oid: str | None) -> None:
+                if not oid:
+                    return
+                async with sem:
+                    n = await self._count_instances("studies", oid, session=session)
+                if n is not None:
+                    rows[i]["number_of_instances"] = n
+
+            await asyncio.gather(
+                *[one(i, oid) for i, oid in enumerate(ids)],
+                return_exceptions=True,
+            )
+        return rows
+
     async def find_patients(
         self,
         patient_name: str = "",
@@ -262,13 +316,14 @@ class OrthancApiService:
                 "modalities_in_study": normalize_modalities_in_study(
                     main.get("ModalitiesInStudy", "")
                 ),
-                "number_of_series": len(item.get("Series", [])),
+                "number_of_series": len(item.get("Series", []) or []),
                 "number_of_instances": 0,
                 "patient_id": patient_main.get("PatientID", ""),
                 "patient_name": patient_main.get("PatientName", ""),
+                "_orthanc_id": item.get("ID") or "",
             })
 
-        return studies
+        return await self._enrich_study_instance_counts(studies)
 
     def _study_sort_key(self, item: dict) -> tuple:
         main = item.get("MainDicomTags", {})
@@ -301,11 +356,18 @@ class OrthancApiService:
         return True
 
     def _study_row_from_item(self, item: dict) -> dict:
+        """Build a study row from an expanded /tools/find Study resource.
+
+        Expanded studies list Series as Orthanc IDs only — instance counts come from
+        ``/studies/{id}/statistics`` via ``_enrich_study_instance_counts``.
+        """
         main = item.get("MainDicomTags", {})
         patient_main = item.get("PatientMainDicomTags", {})
+        series = item.get("Series", []) or []
         n_inst = 0
-        for ser in item.get("Series", []) or []:
-            n_inst += len(ser.get("Instances", []) or [])
+        for ser in series:
+            if isinstance(ser, dict):
+                n_inst += len(ser.get("Instances", []) or [])
         return {
             "study_instance_uid": main.get("StudyInstanceUID", ""),
             "study_date": main.get("StudyDate", ""),
@@ -315,10 +377,11 @@ class OrthancApiService:
             "modalities_in_study": normalize_modalities_in_study(
                 main.get("ModalitiesInStudy", "")
             ),
-            "number_of_series": len(item.get("Series", []) or []),
+            "number_of_series": len(series) if isinstance(series, list) else 0,
             "number_of_instances": n_inst,
             "patient_id": patient_main.get("PatientID", ""),
             "patient_name": patient_main.get("PatientName", ""),
+            "_orthanc_id": item.get("ID") or "",
         }
 
     def _study_row_from_study_resource(self, detail: dict) -> dict:
@@ -340,6 +403,7 @@ class OrthancApiService:
             "number_of_instances": 0,
             "patient_id": patient_main.get("PatientID", ""),
             "patient_name": patient_main.get("PatientName", ""),
+            "_orthanc_id": detail.get("ID") or "",
         }
 
     async def _find_recent_via_study_list(
@@ -433,6 +497,7 @@ class OrthancApiService:
                 if self._study_matches_date_window(d, study_date_from, study_date_to)
             ]
         rows = [self._study_row_from_study_resource(d) for d in details[:limit]]
+        rows = await self._enrich_study_instance_counts(rows)
         logger.info(
             "Orthanc fallback: sorted %d studies with tags, returning %d newest",
             len(details),
@@ -554,6 +619,7 @@ class OrthancApiService:
                     if self._study_matches_date_window(it, df, dt)
                 ]
             rows = [self._study_row_from_item(item) for item in sorted_items[:limit]]
+            rows = await self._enrich_study_instance_counts(rows)
             logger.info(
                 "Orthanc recent studies: returning %d of %d collected (strategy log above)",
                 len(rows),
@@ -584,13 +650,38 @@ class OrthancApiService:
         series_list = []
         for item in results:
             main = item.get("MainDicomTags", {})
+            instances = item.get("Instances", []) or []
+            n_inst = len(instances) if isinstance(instances, list) else 0
             series_list.append({
                 "series_instance_uid": main.get("SeriesInstanceUID", ""),
                 "series_number": int(main.get("SeriesNumber", 0) or 0),
                 "series_description": main.get("SeriesDescription", ""),
                 "modality": main.get("Modality", ""),
-                "number_of_instances": len(item.get("Instances", [])),
+                "number_of_instances": n_inst,
                 "body_part_examined": main.get("BodyPartExamined", ""),
+                "_orthanc_id": item.get("ID") or "",
             })
 
+        need_stats = [
+            (i, row["_orthanc_id"])
+            for i, row in enumerate(series_list)
+            if row["number_of_instances"] == 0 and row["_orthanc_id"]
+        ]
+        if need_stats:
+            async with aiohttp.ClientSession(auth=self.auth) as session:
+                sem = asyncio.Semaphore(32)
+
+                async def one(i: int, oid: str) -> None:
+                    async with sem:
+                        n = await self._count_instances("series", oid, session=session)
+                    if n is not None:
+                        series_list[i]["number_of_instances"] = n
+
+                await asyncio.gather(
+                    *[one(i, oid) for i, oid in need_stats],
+                    return_exceptions=True,
+                )
+
+        for row in series_list:
+            row.pop("_orthanc_id", None)
         return series_list
