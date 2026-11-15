@@ -12,6 +12,7 @@ from sanic import Request
 from sanic.response import json as json_response
 
 from config import config
+from logd_client import bp_log, client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,10 @@ async def cd_auth_middleware(request: Request):
 
     allowed, err = await validate_ultramar_cd_access(request)
     if not allowed:
+        bp_log(
+            "auth.denied",
+            f"ip={client_ip(request)} reason=no-privilege",
+        )
         return json_response(
             {"error": err or "forbidden", "detail": "CD access denied by Ultramar"},
             status=403,

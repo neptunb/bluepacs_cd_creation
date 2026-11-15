@@ -14,6 +14,8 @@ from sanic import Blueprint, json as json_response
 from sanic.request import Request
 from sanic.response import file_stream
 
+from logd_client import bp_log
+
 from constants.disc_layout import WORKSPACE_STUDY_ZIP_SUBDIR
 from constants.job_messages import (
     BOTH_ISOS_READY,
@@ -258,6 +260,10 @@ async def create_cd(request: Request):
         name=f"build_{job_id}",
     )
 
+    bp_log(
+        "burn.start",
+        f"job={job_id[:4]} node={burn_req.node_ae_title} studies={len(burn_req.studies)}",
+    )
     return json_response({"job_id": job_id, "status": "queued"})
 
 
@@ -326,6 +332,11 @@ async def download_iso(request: Request, job_id: str):
     if file_size is not None:
         headers["Content-Length"] = str(file_size)
 
+    kind = "zip" if mime == "application/zip" else "iso"
+    bp_log(
+        "download.start",
+        f"job={job_id[:4]} kind={kind} bytes={file_size if file_size is not None else '-'}",
+    )
     return await file_stream(
         out_path,
         mime_type=mime,
@@ -492,6 +503,15 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
             job["kpacs_error"] = None
             job["status"] = "complete"
             job["progress"] = 1.0
+            bp_log(
+                "burn.done",
+                "job=%s files=%s bytes=%s result=ok"
+                % (
+                    job_id[:4],
+                    int(job.get("retrieved_instances") or 0),
+                    int(job.get("retrieved_bytes") or 0),
+                ),
+            )
             _set_job_message(
                 job,
                 DEFAULT_MESSAGE_TEXT[STUDY_ZIP_READY],
@@ -556,6 +576,15 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
 
         job["status"] = "complete"
         job["progress"] = 1.0
+        bp_log(
+            "burn.done",
+            "job=%s files=%s bytes=%s result=ok"
+            % (
+                job_id[:4],
+                int(job.get("retrieved_instances") or 0),
+                int(job.get("retrieved_bytes") or 0),
+            ),
+        )
         if job.get("kpacs_error"):
             _set_job_message(
                 job,
@@ -577,5 +606,10 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
 
     except Exception as e:
         job["status"] = "error"
+        text = str(e).lower()
+        reason = "retrieve-empty" if ("empty" in text or "no files" in text) else "failed"
+        bp_log("burn.fail", f"job={job_id[:4]} result=failed reason={reason}")
+        if reason == "retrieve-empty" or "retriev" in text:
+            bp_log("dicom.move", f"job={job_id[:4]} target={node.get('ae_title', '-')} result=failed")
         _set_job_message(job, str(e), None)
         job["progress"] = 0.0

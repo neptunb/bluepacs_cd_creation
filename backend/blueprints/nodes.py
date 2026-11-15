@@ -12,6 +12,7 @@ from sanic import Blueprint, json as json_response
 from sanic.request import Request
 
 from config import config
+from logd_client import bp_log
 from services.dicom_query import DicomQueryService
 from services.ultramar_nodes import fetch_node, fetch_nodes
 
@@ -43,6 +44,8 @@ async def echo_node(request: Request):
     )
 
     success = await service.verify()
+    if not success:
+        bp_log("dicom.echo", f"target={ae_title} result=failed")
     return json_response({"ae_title": ae_title, "reachable": success})
 
 
