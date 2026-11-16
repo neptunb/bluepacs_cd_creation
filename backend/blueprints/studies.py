@@ -7,7 +7,7 @@ from services.dicom_query import DicomQueryService
 from services.orthanc_api import OrthancApiService
 from services.ultramar_nodes import fetch_node
 from config import config
-from logd_client import bp_log
+from logd_client import bp_log, request_log_user
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ async def recent_studies(request: Request):
         )
     except Exception as e:
         logger.exception("Recent studies failed for node %s", node["ae_title"])
-        bp_log("dicom.find", f"target={node['ae_title']} result=failed")
+        bp_log("dicom.find", f"target={node['ae_title']} result=failed", request_log_user(request))
         return json_response(
             {"error": f"Recent studies failed: {e}", "studies": []}, status=500
         )
@@ -89,7 +89,7 @@ async def get_series(request: Request, study_uid: str):
         series_list = await service.find_series(study_instance_uid=study_uid)
     except Exception as e:
         logger.exception("Series search failed for node %s", node["ae_title"])
-        bp_log("dicom.find", f"target={node['ae_title']} result=failed")
+        bp_log("dicom.find", f"target={node['ae_title']} result=failed", request_log_user(request))
         return json_response(
             {"error": f"Series search failed: {e}", "series": []}, status=500
         )

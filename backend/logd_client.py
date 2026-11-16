@@ -34,6 +34,21 @@ def bp_log(event: str, detail: str, user: str = "-") -> None:
     threading.Thread(target=send, daemon=True).start()
 
 
+def request_log_user(request, fallback: str = "-") -> str:
+    """Name and userid captured when Ultramar accepted this request."""
+    ctx = getattr(request, "ctx", None)
+    user = getattr(ctx, "log_user", None) if ctx is not None else None
+    if isinstance(user, str):
+        user = " ".join(user.split())
+        if user and user != "-":
+            return user
+    if isinstance(fallback, str):
+        fallback = " ".join(fallback.split())
+        if fallback:
+            return fallback
+    return "-"
+
+
 def client_ip(request) -> str:
     raw = (
         request.headers.get("cf-connecting-ip")

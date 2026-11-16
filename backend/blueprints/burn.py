@@ -14,7 +14,7 @@ from sanic import Blueprint, json as json_response
 from sanic.request import Request
 from sanic.response import file_stream
 
-from logd_client import bp_log
+from logd_client import bp_log, request_log_user
 
 from constants.disc_layout import WORKSPACE_STUDY_ZIP_SUBDIR
 from constants.job_messages import (
@@ -251,6 +251,7 @@ async def create_cd(request: Request):
         "retrieved_bytes": 0,
         "expected_instances": burn_req.expected_instances,
         "download_kind": "study_zip" if burn_req.study_zip_only else "ohif_iso",
+        "log_user": request_log_user(request),
     }
     job_locks[job_id] = Lock()
 
@@ -263,6 +264,7 @@ async def create_cd(request: Request):
     bp_log(
         "burn.start",
         f"job={job_id[:4]} node={burn_req.node_ae_title} studies={len(burn_req.studies)}",
+        active_jobs[job_id]["log_user"],
     )
     return json_response({"job_id": job_id, "status": "queued"})
 
@@ -336,6 +338,7 @@ async def download_iso(request: Request, job_id: str):
     bp_log(
         "download.start",
         f"job={job_id[:4]} kind={kind} bytes={file_size if file_size is not None else '-'}",
+        request_log_user(request, job.get("log_user") or "-"),
     )
     return await file_stream(
         out_path,
@@ -511,6 +514,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
                     int(job.get("retrieved_instances") or 0),
                     int(job.get("retrieved_bytes") or 0),
                 ),
+                job.get("log_user") or "-",
             )
             _set_job_message(
                 job,
@@ -584,6 +588,7 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
                 int(job.get("retrieved_instances") or 0),
                 int(job.get("retrieved_bytes") or 0),
             ),
+            job.get("log_user") or "-",
         )
         if job.get("kpacs_error"):
             _set_job_message(
@@ -608,8 +613,16 @@ async def _run_build_job(job_id: str, burn_req: BurnRequest, node: dict):
         job["status"] = "error"
         text = str(e).lower()
         reason = "retrieve-empty" if ("empty" in text or "no files" in text) else "failed"
-        bp_log("burn.fail", f"job={job_id[:4]} result=failed reason={reason}")
+        bp_log(
+            "burn.fail",
+            f"job={job_id[:4]} result=failed reason={reason}",
+            job.get("log_user") or "-",
+        )
         if reason == "retrieve-empty" or "retriev" in text:
-            bp_log("dicom.move", f"job={job_id[:4]} target={node.get('ae_title', '-')} result=failed")
+            bp_log(
+                "dicom.move",
+                f"job={job_id[:4]} target={node.get('ae_title', '-')} result=failed",
+                job.get("log_user") or "-",
+            )
         _set_job_message(job, str(e), None)
         job["progress"] = 0.0

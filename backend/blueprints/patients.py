@@ -8,7 +8,7 @@ from services.orthanc_api import OrthancApiService
 from services.ultramar_nodes import fetch_node
 from models.schemas import PatientQuery
 from config import config
-from logd_client import bp_log
+from logd_client import bp_log, request_log_user
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ async def search_patients(request: Request):
         )
     except Exception as e:
         logger.exception("Patient search failed for node %s", node["ae_title"])
-        bp_log("dicom.find", f"target={node['ae_title']} result=failed")
+        bp_log("dicom.find", f"target={node['ae_title']} result=failed", request_log_user(request))
         return json_response(
             {"error": f"Search failed: {e}", "patients": []}, status=500
         )
@@ -93,7 +93,7 @@ async def get_patient_studies(request: Request, patient_id: str):
         )
     except Exception as e:
         logger.exception("Study search failed for node %s", node["ae_title"])
-        bp_log("dicom.find", f"target={node['ae_title']} result=failed")
+        bp_log("dicom.find", f"target={node['ae_title']} result=failed", request_log_user(request))
         return json_response(
             {"error": f"Study search failed: {e}", "studies": []}, status=500
         )

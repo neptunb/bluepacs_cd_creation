@@ -61,6 +61,10 @@ async def validate_ultramar_cd_access(request: Request) -> tuple[bool, Optional[
                 except Exception:
                     return False, "invalid_php_json"
                 if isinstance(data, dict) and data.get("allowed") is True:
+                    user = data.get("user")
+                    if not isinstance(user, str) or not user.strip():
+                        user = "-"
+                    request.ctx.log_user = " ".join(user.split())
                     return True, None
                 err = data.get("error") if isinstance(data, dict) else None
                 return False, str(err or "not_allowed")
